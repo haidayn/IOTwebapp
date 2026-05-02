@@ -56,3 +56,7 @@ $RECYCLE.BIN/
 
 # Built Visual Studio Code Extensions
 *.vsix
+
+### Custom Folders
+# Ignore reference folder
+reference/

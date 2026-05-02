@@ -1,4 +1,4 @@
-// Thu thập dữ liệu & Điều khiển qua MQTT (Config Động hoàn toàn + Timeout 10s)
+// Thu thập dữ liệu & Điều khiển qua MQTT (4 Thiết bị + LDR Nhị phân)
 ///////////////////////////////////////////
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
@@ -25,6 +25,7 @@ String mqtt_pass   = "";
 #define LED_TEMP 14   // ID: 1 - Quạt (Fan) - D5
 #define LED_HUM  12   // ID: 2 - Điều hòa (Air) - D6
 #define LED_LDR  13   // ID: 3 - Đèn (Light) - D7
+#define LED_TEST 15   // ID: 4 - Thiết bị Test - D8
 
 #define DHTTYPE DHT11
 
@@ -63,7 +64,6 @@ void connectWiFi() {
   else WiFi.begin(wifi_ssid.c_str(), wifi_pass.c_str());
 
   int timeout = 0;
-  // Thử tối đa 20 lần (20 * 500ms = 10 giây)
   while (WiFi.status() != WL_CONNECTED && timeout < 40) {
     delay(500); 
     Serial.print("."); 
@@ -79,20 +79,16 @@ void connectWiFi() {
   }
 }
 
-
 /* ================= KẾT NỐI MQTT ================= */
 boolean reconnectMQTT() {
-  if (WiFi.status() != WL_CONNECTED || mqtt_server == "") return false;
+  if (WiFi.status() != WL_CONNECTED || mqtt_server == "") return false; 
   
   Serial.print("[MQTT] Dang ket noi toi " + mqtt_server + "...");
   String clientId = "ESP8266-" + String(ESP.getChipId());
   
   if (mqttClient.connect(clientId.c_str(), mqtt_user.c_str(), mqtt_pass.c_str())) {
     Serial.println(" [OK]");
-
-    /* subscribe vào topic control */
     mqttClient.subscribe(MQTT_TOPIC_CONTROL);  
-    
     publishDeviceStatus(); 
     return true;
   } else {
@@ -101,14 +97,12 @@ boolean reconnectMQTT() {
   }
 }
 
-
 /* ================= CẤU HÌNH QUA SERIAL TERMINAL ================= */
 void handleSerialConfig() {
   if (Serial.available()) {
     String cmd = Serial.readStringUntil('\n');
     cmd.trim();
 
-    // 1. Cấu hình WiFi
     if (cmd.startsWith("wifi: ")) {
       String data = cmd.substring(6);
       data.trim();
@@ -125,8 +119,6 @@ void handleSerialConfig() {
         Serial.println("[ERR] Sai format! Mau: wifi: [ssid]/[pass]");
       }
     }
-    
-    // 2. Cấu hình MQTT
     else if (cmd.startsWith("mqtt: ")) {
       String data = cmd.substring(6);
       data.trim();
@@ -155,10 +147,6 @@ void handleSerialConfig() {
   }
 }
 
-
-
-
-
 /* ================= XỬ LÝ LỆNH TỪ MQTT ================= */
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   String msg = "";
@@ -179,7 +167,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
       if (doc["led"].is<const char*>()) {
         String value = doc["led"].as<String>();
         if (value == "all") ledId = 0;
-        else if (value == "run" || value == "sequence") ledId = 4;
+        else if (value == "run" || value == "sequence") ledId = 5; 
       } else {
         ledId = doc["led"];
       }
@@ -198,7 +186,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
         if (colon1 != -1) {
           String value = part1.substring(colon1 + 1);
           if (value == "all") ledId = 0;
-          else if (value == "run" || value == "sequence") ledId = 4;
+          else if (value == "run" || value == "sequence") ledId = 5; 
           else ledId = value.toInt();
         }
         int colon2 = part2.indexOf(":");
@@ -207,43 +195,45 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     }
 
     action.toLowerCase();
-    if (action == "sequence") ledId = 4; 
-    
-    if (action == "blink" && ledId == 0) ledId = 5;
+    if (action == "sequence") ledId = 5; 
+    if (action == "blink" && ledId == 0) ledId = 6; 
 
     // --- ĐIỀU KHIỂN THIẾT BỊ ---
-    if (ledId == 4) { 
+    if (ledId == 5) { 
       sequenceMode = true;                 
       blinkAllMode = false;
       sequenceStep = 0;                    
       lastSequence = millis();
-      digitalWrite(LED_TEMP, HIGH); digitalWrite(LED_HUM, LOW); digitalWrite(LED_LDR, LOW);
+      digitalWrite(LED_TEMP, HIGH); digitalWrite(LED_HUM, LOW); digitalWrite(LED_LDR, LOW); digitalWrite(LED_TEST, LOW);
     } 
-    else if (ledId == 5) { 
+    else if (ledId == 6) { 
       sequenceMode = false;
       blinkAllMode = true;
       blinkAllState = HIGH;
       lastBlinkAll = millis();
-      digitalWrite(LED_TEMP, HIGH); digitalWrite(LED_HUM, HIGH); digitalWrite(LED_LDR, HIGH);
-      Serial.println("[CMD] => Bat nhay dong loat");
+      digitalWrite(LED_TEMP, HIGH); digitalWrite(LED_HUM, HIGH); digitalWrite(LED_LDR, HIGH); digitalWrite(LED_TEST, HIGH);
     }
     else {
       sequenceMode = false; 
       blinkAllMode = false;
 
       if (ledId == 0) { 
-        if (action == "on") { digitalWrite(LED_TEMP, HIGH); digitalWrite(LED_HUM, HIGH); digitalWrite(LED_LDR, HIGH); } 
-        else if (action == "off") { digitalWrite(LED_TEMP, LOW); digitalWrite(LED_HUM, LOW); digitalWrite(LED_LDR, LOW); }
+        if (action == "on") { 
+          digitalWrite(LED_TEMP, HIGH); digitalWrite(LED_HUM, HIGH); digitalWrite(LED_LDR, HIGH); digitalWrite(LED_TEST, HIGH); 
+        } 
+        else if (action == "off") { 
+          digitalWrite(LED_TEMP, LOW); digitalWrite(LED_HUM, LOW); digitalWrite(LED_LDR, LOW); digitalWrite(LED_TEST, LOW); 
+        }
       } 
       else if (ledId == 1) digitalWrite(LED_TEMP, (action == "on") ? HIGH : LOW);
       else if (ledId == 2) digitalWrite(LED_HUM, (action == "on") ? HIGH : LOW);
       else if (ledId == 3) digitalWrite(LED_LDR, (action == "on") ? HIGH : LOW);
+      else if (ledId == 4) digitalWrite(LED_TEST, (action == "on") ? HIGH : LOW); 
     }
 
     publishDeviceStatus();
   }
 }
-
 
 /* ================= HÀM GỬI PHẢN HỒI TRẠNG THÁI ================= */
 void publishDeviceStatus() {
@@ -253,6 +243,7 @@ void publishDeviceStatus() {
   doc["fan"] = (digitalRead(LED_TEMP) == HIGH) ? 1 : 2;
   doc["air"] = (digitalRead(LED_HUM) == HIGH) ? 1 : 2;
   doc["led"] = (digitalRead(LED_LDR) == HIGH) ? 1 : 2;
+  doc["test"] = (digitalRead(LED_TEST) == HIGH) ? 1 : 2; 
   
   if (sequenceMode) doc["mode"] = "sequence";
   else if (blinkAllMode) doc["mode"] = "blink";
@@ -265,35 +256,30 @@ void publishDeviceStatus() {
   Serial.println("[MQTT PUB] Status sent: " + String(buffer));
 }
 
-
-
-
-
-
 /* ================= SETUP ================= */
 void setup() {
   Serial.begin(115200);
 
-  pinMode(LED_TEMP, OUTPUT); pinMode(LED_HUM, OUTPUT); pinMode(LED_LDR, OUTPUT);
+  pinMode(LED_TEMP, OUTPUT); pinMode(LED_HUM, OUTPUT); pinMode(LED_LDR, OUTPUT); pinMode(LED_TEST, OUTPUT);
+  
+  // Thiết lập chân cảm biến ánh sáng là INPUT
   pinMode(LDR_PIN, INPUT);
 
   Serial.println("\n[SYS] Dang khoi dong...");
   for (int i = 0; i < 3; i++) {
-    digitalWrite(LED_TEMP, HIGH); digitalWrite(LED_HUM, HIGH); digitalWrite(LED_LDR, HIGH);
+    digitalWrite(LED_TEMP, HIGH); digitalWrite(LED_HUM, HIGH); digitalWrite(LED_LDR, HIGH); digitalWrite(LED_TEST, HIGH);
     delay(500); 
-    digitalWrite(LED_TEMP, LOW); digitalWrite(LED_HUM, LOW); digitalWrite(LED_LDR, LOW);
+    digitalWrite(LED_TEMP, LOW); digitalWrite(LED_HUM, LOW); digitalWrite(LED_LDR, LOW); digitalWrite(LED_TEST, LOW);
     delay(500); 
   }
 
   dht.begin();
-  
   mqttClient.setCallback(mqttCallback);
 
   Serial.println("\n--- He thong san sang ---");
   Serial.println("De doi WiFi nhap: wifi: [ten_wifi]/[password]");
   Serial.println("De doi MQTT nhap: mqtt: [server]/[port]/[user]/[pass]");
   
-  // Thử kết nối nếu có dữ liệu cũ (hiện tại rỗng nên sẽ in ra [SKIP])
   connectWiFi(); 
 }
 
@@ -302,7 +288,6 @@ void loop() {
   handleSerialConfig();
 
   if (WiFi.status() != WL_CONNECTED) {
-    // Chỉ thử kết nối lại tự động nếu đã có cấu hình SSID
     if (wifi_ssid != "" && millis() - lastWiFiAttempt > 30000) {
       lastWiFiAttempt = millis();
       connectWiFi();
@@ -322,11 +307,12 @@ void loop() {
     if (millis() - lastSequence >= 300) {
       lastSequence = millis();
       sequenceStep++;
-      if (sequenceStep > 2) sequenceStep = 0;
+      if (sequenceStep > 3) sequenceStep = 0; 
 
       digitalWrite(LED_TEMP, (sequenceStep == 0) ? HIGH : LOW);
       digitalWrite(LED_HUM,  (sequenceStep == 1) ? HIGH : LOW);
       digitalWrite(LED_LDR,  (sequenceStep == 2) ? HIGH : LOW);
+      digitalWrite(LED_TEST, (sequenceStep == 3) ? HIGH : LOW); 
     }
   }
 
@@ -338,6 +324,7 @@ void loop() {
       digitalWrite(LED_TEMP, blinkAllState ? HIGH : LOW);
       digitalWrite(LED_HUM,  blinkAllState ? HIGH : LOW);
       digitalWrite(LED_LDR,  blinkAllState ? HIGH : LOW);
+      digitalWrite(LED_TEST, blinkAllState ? HIGH : LOW); 
     }
   }
 
@@ -346,7 +333,10 @@ void loop() {
 
     float h = dht.readHumidity();
     float t = dht.readTemperature();
-    int lightState = digitalRead(LDR_PIN);
+    
+    // Đọc trạng thái ánh sáng nhị phân (0 hoặc 1)
+    // Chú ý: Đa số module LDR khi có ánh sáng chiếu vào sẽ xuất LOW (0), khi tối xuất HIGH (1)
+    int lightState = (digitalRead(LDR_PIN) == HIGH) ? 1 : 0;
 
     if (isnan(h) || isnan(t)) return;
 
@@ -354,11 +344,10 @@ void loop() {
       StaticJsonDocument<256> docData;
       docData["temp"] = t;
       docData["hum"] = h;
-      docData["light"] = lightState;
+      docData["light"] = lightState; // Đảm bảo JSON nhận chuẩn số nguyên (0 hoặc 1)
       
       char dataBuffer[256];
       serializeJson(docData, dataBuffer);
-      //publish data sensor
       mqttClient.publish(MQTT_TOPIC_DATA, dataBuffer);
     }
   }
