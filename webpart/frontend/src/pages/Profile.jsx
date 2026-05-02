@@ -1,3 +1,6 @@
+import avatarImg from '../assets/avatar.jpg';
+import reportPdf from '../assets/IOTl1.pdf';
+
 export default function Profile() {
   return (
     <>
@@ -8,10 +11,9 @@ export default function Profile() {
         <div className="profile-head">
           <img
             className="avatar"
-            src="/assets/avatar.jpg"
+            src={avatarImg}
             alt="Avatar"
             onError={e => {
-              // Fallback nếu không có ảnh
               e.target.style.display = 'none';
             }}
           />
@@ -61,19 +63,19 @@ export default function Profile() {
         <div className="profile-links">
           <a
             className="link-pill"
-            href="https://github.com/haidayyy"
+            href="https://github.com/haidayn/IOTwebapp"
             target="_blank"
             rel="noopener noreferrer"
           >
             <svg viewBox="0 0 24 24" fill="currentColor">
               <path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.4-3.9-1.4-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.7 1.3 3.4 1 .1-.8.4-1.3.8-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2.9-.3 2-.4 3-.4s2.1.1 3 .4c2.3-1.5 3.3-1.2 3.3-1.2.6 1.6.2 2.8.1 3.1.7.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5Z"/>
             </svg>
-            haidayn (haidayyy)
+            GitHub Repository
           </a>
 
           <a
             className="link-pill"
-            href="/assets/api-docs.pdf"
+            href="https://www.testingdomain.test"
             target="_blank"
             rel="noopener noreferrer"
           >
@@ -81,12 +83,12 @@ export default function Profile() {
               <path d="m16 18 6-6-6-6"/>
               <path d="m8 6-6 6 6 6"/>
             </svg>
-            API Docs
+            Postman API Docs
           </a>
 
           <a
             className="link-pill"
-            href="/assets/baocao.pdf"
+            href={reportPdf}
             target="_blank"
             rel="noopener noreferrer"
           >
@@ -100,7 +102,7 @@ export default function Profile() {
 
           <a
             className="link-pill"
-            href="https://www.figma.com/design/g803lLuBEuh"
+            href="https://www.figma.com/design/g803lLu8EuhNofeiTfTBIE/IoTWEB?node-id=0-1&t=E9dFVyM9Edp2sC61-1"
             target="_blank"
             rel="noopener noreferrer"
           >

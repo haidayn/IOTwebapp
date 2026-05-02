@@ -4,7 +4,7 @@
  *   name      {string}         - display name ("Fan", "Air Conditioner", "Light")
  *   deviceKey {string}         - API key ("fan", "air", "light")
  *   isOn      {boolean|null}   - null = unknown/loading
- *   pending   {boolean}        - đang chờ phản hồi từ thiết bị
+ *   pending   {boolean}        - đang chờ phản hồi từ thiết bị (Waiting state — req2 §BƯỚC 2)
  *   onToggle  {function}       - (deviceKey, 'ON'|'OFF') => void
  *   icon      {ReactNode}
  */
@@ -19,16 +19,23 @@ export default function DeviceCard({ name, deviceKey, isOn, pending, onToggle, i
           {icon}
           {name}
         </h3>
-        {isOn !== null && isOn !== undefined && !pending && (
-          <span className={`status-pill ${isOn ? 'running' : 'failed'}`}>
-            {isOn ? 'ON' : 'OFF'}
-          </span>
+        {/* Status pill — shows WAITING during pending, ON/OFF when confirmed */}
+        {pending ? (
+          <span className="status-pill pending">Waiting</span>
+        ) : (
+          isOn !== null && isOn !== undefined && (
+            <span className={`status-pill ${isOn ? 'running' : 'failed'}`}>
+              {isOn ? 'ON' : 'OFF'}
+            </span>
+          )
         )}
       </div>
 
+      {/* req2 §BƯỚC 2: Waiting state — spinner + "Đang xử lý..." label */}
       {pending ? (
-        <div className="toggle" style={{ justifyContent: 'center', padding: '4px 0' }}>
+        <div className="toggle" style={{ flexDirection: 'column', justifyContent: 'center', padding: '8px 0', gap: 6, border: 0 }}>
           <div className="spinner" />
+          <span style={{ textAlign: 'center', fontSize: 12, color: 'var(--muted)', fontWeight: 500 }}>Đang xử lý…</span>
         </div>
       ) : (
         <div className="toggle">

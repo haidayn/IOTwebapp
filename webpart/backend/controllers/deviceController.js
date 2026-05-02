@@ -120,7 +120,7 @@ const control = async (req, res, next) => {
 
         publishDeviceControl(deviceName, action);
 
-        // Timeout 5s: nếu không nhận được status response → đánh dấu failed
+        // Timeout 10s (req §5.6): nếu không nhận được status response từ Hardware → đánh dấu failed + rollback
         setTimeout(async () => {
             try {
                 const checkLog = await DeviceAction.findByPk(log.IDactionData);
@@ -132,7 +132,7 @@ const control = async (req, res, next) => {
             } catch (err) {
                 console.error('Timeout check error:', err);
             }
-        }, 5000);
+        }, 10000);
 
         res.json({ success: true, log });
     } catch (err) {

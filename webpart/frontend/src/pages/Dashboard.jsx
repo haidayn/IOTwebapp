@@ -1,10 +1,9 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import StatCard from '../components/ui/StatCard';
 import DeviceCard from '../components/ui/DeviceCard';
 import SensorChart from '../components/ui/SensorChart';
-import { getDeviceStatus, controlDevice, getSensorLatest } from '../services/api';
+import { getDeviceStatus, controlDevice, getSensorHistory } from '../services/api';
 import useWebSocket from '../hooks/useWebSocket';
-import { useEffect } from 'react';
 
 /* ─── icons ─── */
 const TempIcon = () => (
@@ -50,41 +49,102 @@ const DEVICES = [
 ];
 
 export default function Dashboard() {
-  const [sensors, setSensors]   = useState({ temperature: null, humidity: null, light: null });
-  const [devStatus, setDevStatus] = useState({ fan: null, air: null, light: null });
-  const [pending, setPending]   = useState({});        // { fan: true/false, ... }
-  const [error, setError]       = useState(null);
+  const [sensors, setSensors]      = useState({ temperature: null, humidity: null, light: null });
+  const [sensorHistory, setHistory] = useState({});   // { temperature: [], humidity: [], light: [] }
+  const [devStatus, setDevStatus]   = useState({ fan: null, air: null, light: null });
+  const [pending, setPending]       = useState({});
+  const [initError, setInitError]   = useState(null);  // Initial page-load error only
 
-  /* Load initial data */
+  /* ─── Toast system (req2 §4.2) ─── */
+  const [toasts, setToasts] = useState([]);
+  const showToast = useCallback((msg, type = 'error') => {
+    const id = Date.now() + Math.random();
+    setToasts(prev => [...prev, { id, msg, type }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 5000);
+  }, []);
+  const dismissToast = useCallback((id) => setToasts(prev => prev.filter(t => t.id !== id)), []);
+
+  /* ─── PHASE 1: Load initial sensor history → populate chart + stat cards ─── */
+  /* Requirements §2.2: Frontend → GET /api/sensors/history on Dashboard mount  */
   useEffect(() => {
-    getSensorLatest().then(data => setSensors(data)).catch(console.error);
-    getDeviceStatus().then(data => setDevStatus(data)).catch(console.error);
+    const loadAll = async () => {
+      try {
+        // Fetch DESC (newest first), then reverse → chronological order for chart
+        const [tempRes, humRes, lightRes, statusRes] = await Promise.all([
+          getSensorHistory({ sensorName: 'temperature', limit: 30, sortBy: 'date', sortDir: 'DESC' }),
+          getSensorHistory({ sensorName: 'humidity',    limit: 30, sortBy: 'date', sortDir: 'DESC' }),
+          getSensorHistory({ sensorName: 'light',       limit: 30, sortBy: 'date', sortDir: 'DESC' }),
+          getDeviceStatus(),
+        ]);
+
+        const hist = {
+          temperature: (tempRes.data  || []).slice().reverse(),  // ASC order for chart
+          humidity:    (humRes.data   || []).slice().reverse(),
+          light:       (lightRes.data || []).slice().reverse(),
+        };
+        setHistory(hist);
+
+        // Derive latest stat card values from the most recent history record
+        const latest = {};
+        if (hist.temperature.length) latest.temperature = hist.temperature[hist.temperature.length - 1].value;
+        if (hist.humidity.length)    latest.humidity    = hist.humidity[hist.humidity.length - 1].value;
+        // Light inversion: hardware 1=tối, 0=sáng → display 1=sáng, 0=tối
+        if (hist.light.length)       latest.light = 1 - hist.light[hist.light.length - 1].value;
+        setSensors(prev => ({ ...prev, ...latest }));
+
+        setDevStatus(statusRes);
+      } catch (err) {
+        console.error('[Dashboard] Initial load error:', err.message);
+        setInitError('Failed to load initial data.');
+      }
+    };
+    loadAll();
   }, []);
 
   /* WebSocket handlers */
   const handleSensorPush = useCallback((payload) => {
-    setSensors(prev => ({ ...prev, ...payload }));
+    const normalized = { ...payload };
+    // Light inversion: hardware 1=tối, 0=sáng → display 1=sáng, 0=tối
+    if (normalized.light !== undefined && normalized.light !== null) {
+      normalized.light = 1 - normalized.light;
+    }
+    setSensors(prev => ({ ...prev, ...normalized }));
   }, []);
 
-  const handleDevicePush = useCallback((payload) => {
+  /* Req2 §BƯỚC 14 + §4.2 Rollback handler */
+  const handleDevicePush = useCallback(async (payload) => {
     const { device, is_on, error: devErr } = payload;
     if (!device) return;
-    setDevStatus(prev => ({ ...prev, [device]: is_on }));
-    setPending(prev => ({ ...prev, [device]: false }));
-    if (devErr) setError(`Device "${device}" failed: ${devErr}`);
-  }, []);
+
+    if (devErr) {
+      /* ─── ROLLBACK (req2 §4.2): Re-fetch DB state, replace Waiting with actual DB status ─── */
+      try {
+        const freshStatus = await getDeviceStatus();
+        setDevStatus(freshStatus);
+      } catch {
+        // Fallback: set device to false if DB fetch also fails
+        setDevStatus(prev => ({ ...prev, [device]: false }));
+      }
+      setPending(prev => ({ ...prev, [device]: false }));
+      showToast(`Lệnh "${device}" thất bại: ${devErr}. Đã khôi phục trạng thái.`, 'error');
+    } else {
+      /* ─── Success: update device state with confirmed hardware response ─── */
+      setDevStatus(prev => ({ ...prev, [device]: is_on }));
+      setPending(prev => ({ ...prev, [device]: false }));
+    }
+  }, [showToast]);
 
   useWebSocket(handleSensorPush, handleDevicePush);
 
-  /* Toggle device */
+  /* Toggle device — req2 §BƯỚC 1-3 */
   const handleToggle = async (deviceKey, action) => {
-    setPending(prev => ({ ...prev, [deviceKey]: true }));
-    setError(null);
+    setPending(prev => ({ ...prev, [deviceKey]: true }));  // Bước 2: Waiting
     try {
-      await controlDevice(deviceKey, action);
+      await controlDevice(deviceKey, action);              // Bước 3: POST /api/device/control
     } catch (err) {
+      /* HTTP error → immediate rollback without waiting for WS */
       setPending(prev => ({ ...prev, [deviceKey]: false }));
-      setError(`Failed to send command: ${err.message}`);
+      showToast(`Không gửi được lệnh: ${err.message}`, 'error');
     }
   };
 
@@ -92,13 +152,22 @@ export default function Dashboard() {
     <>
       <h1 className="page-title">Dashboard</h1>
 
-      {error && <div className="error-msg">{error}</div>}
+      {/* Initial load errors (page-level, non-dismissable) */}
+      {initError && <div className="error-msg">{initError}</div>}
 
       {/* Stats */}
       <section className="stats-row">
         <StatCard label="Temperature" value={sensors.temperature} unit="°C"   icon={<TempIcon />} />
         <StatCard label="Humidity"    value={sensors.humidity}    unit="%"    icon={<HumIcon />}  />
-        <StatCard label="Light"       value={sensors.light}       unit="lux"  icon={<LightIcon />}/>
+        {/* Light: no unit, display Sáng/Tối — inverted from hardware raw value */}
+        <StatCard
+          label="Light"
+          value={sensors.light !== null && sensors.light !== undefined
+            ? (sensors.light === 1 ? 'Sáng' : 'Tối')
+            : null}
+          unit=""
+          icon={<LightIcon />}
+        />
       </section>
 
       {/* Devices + Chart */}
@@ -117,8 +186,19 @@ export default function Dashboard() {
           ))}
         </div>
 
-        <SensorChart />
+        {/* ─── Chart: receives pre-loaded history (Phase 1) + realtime stream (Phase 2) ─── */}
+        <SensorChart initialHistory={sensorHistory} latestData={sensors} />
       </section>
+
+      {/* ─── Toast container — req2 §4.2 rollback notifications ─── */}
+      <div className="toast-container">
+        {toasts.map(t => (
+          <div key={t.id} className={`toast toast-${t.type}`}>
+            <span>{t.msg}</span>
+            <button className="toast-close" onClick={() => dismissToast(t.id)}>×</button>
+          </div>
+        ))}
+      </div>
     </>
   );
 }

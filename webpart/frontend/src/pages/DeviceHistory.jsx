@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import FilterBar from '../components/ui/FilterBar';
 import Pagination from '../components/ui/Pagination';
 import StatusPill from '../components/ui/StatusPill';
@@ -31,17 +31,17 @@ export default function DeviceHistory() {
   const [startDate, setStart]       = useState('');
   const [endDate, setEnd]           = useState('');
 
-  const fetchData = useCallback(async (pg = 1, lmt = limit) => {
+  const fetchData = useCallback(async (pg = 1, lmt = limit, resetFilters = false) => {
     setLoading(true);
     setError(null);
     try {
       const params = {
         page: pg,
         limit: lmt,
-        ...(deviceName && { deviceName }),
-        ...(keyword    && { keyword }),
-        ...(startDate  && { fromDate: normalizeDateTime(startDate) }),
-        ...(endDate    && { toDate:   normalizeDateTime(endDate)   }),
+        ...(!resetFilters && deviceName && { deviceName }),
+        ...(!resetFilters && keyword    && { keyword }),
+        ...(!resetFilters && startDate  && { fromDate: normalizeDateTime(startDate) }),
+        ...(!resetFilters && endDate    && { toDate:   normalizeDateTime(endDate)   }),
       };
       const res = await getDeviceHistory(params);
       setRows(res.data || []);
@@ -61,8 +61,12 @@ export default function DeviceHistory() {
   const handleReset = () => {
     setDeviceName(''); setKeyword('');
     setStart(''); setEnd('');
-    setRows([]); setTotal(0); setTotalPgs(1); setPage(1); setFetched(false);
+    fetchData(1, limit, true);
   };
+
+  useEffect(() => {
+    fetchData(1, limit);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handlePageChange  = (p)   => fetchData(p, limit);
   const handleLimitChange = (lmt) => { setLimit(lmt); fetchData(1, lmt); };

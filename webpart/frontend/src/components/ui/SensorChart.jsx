@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Chart, LineElement, PointElement, LineController, CategoryScale,
          LinearScale, Filler, Tooltip } from 'chart.js';
-import { getSensorHistory } from '../../services/api';
 
 Chart.register(LineElement, PointElement, LineController, CategoryScale,
                LinearScale, Filler, Tooltip);
@@ -33,7 +32,7 @@ const TABS = [
     key: 'light',
     label: 'Light',
     color: '#f59e0b',
-    unit: 'lux',
+    unit: '',   // no unit — shows Sáng/Tối
     icon: (
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <circle cx="12" cy="12" r="4"/>
@@ -43,104 +42,190 @@ const TABS = [
   },
 ];
 
-export default function SensorChart() {
-  const canvasRef  = useRef(null);
-  const chartRef   = useRef(null);
+const fmt = (dateStr) => {
+  const d = new Date(dateStr);
+  return `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
+};
+
+/**
+ * Y-axis configuration per sensor type
+ * - Temperature : 0–50 °C, stepSize 2
+ * - Humidity    : 0–100 %, stepSize 10
+ * - Light       : 0–1 (Tối/Sáng), stepSize 1, custom tick labels
+ */
+function getYAxisConfig(tabKey) {
+  switch (tabKey) {
+    case 'temperature':
+      return {
+        beginAtZero: true,
+        min: 0, max: 50,
+        ticks: { color: '#888', stepSize: 2 },
+        grid: { color: '#eef0f6' },
+      };
+    case 'humidity':
+      return {
+        beginAtZero: true,
+        min: 0, max: 100,
+        ticks: { color: '#888', stepSize: 10 },
+        grid: { color: '#eef0f6' },
+      };
+    case 'light':
+      return {
+        beginAtZero: true,
+        min: 0, max: 1,
+        ticks: {
+          color: '#888',
+          stepSize: 1,
+          callback: (v) => v === 1 ? 'Sáng' : 'Tối',
+        },
+        grid: { color: '#eef0f6' },
+      };
+    default:
+      return {
+        beginAtZero: false,
+        ticks: { color: '#888' },
+        grid: { color: '#eef0f6' },
+      };
+  }
+}
+
+/**
+ * Tooltip label for a given tab
+ */
+function getTooltipLabel(tabKey, tabUnit) {
+  if (tabKey === 'light') {
+    return (ctx) => ctx.parsed.y === 1 ? 'Sáng' : 'Tối';
+  }
+  return (ctx) => `${ctx.parsed.y}${tabUnit ? ' ' + tabUnit : ''}`;
+}
+
+/**
+ * Apply light value inversion to display:
+ * Hardware: 1 = tối (dark), 0 = sáng (bright)
+ * Display : 1 = sáng (bright), 0 = tối (dark)
+ */
+function invertLight(tabKey, rawValue) {
+  return tabKey === 'light' ? 1 - rawValue : rawValue;
+}
+
+/**
+ * SensorChart
+ *
+ * Props:
+ *   initialHistory {Object}  — { temperature: [{date,value},...], humidity:[...], light:[...] }
+ *                              Newest 30 records, reversed to chronological order (oldest→newest)
+ *   latestData     {Object}  — { temperature, humidity, light, timestamp }
+ *                              Light value already inverted by Dashboard before being passed in
+ */
+export default function SensorChart({ initialHistory = {}, latestData }) {
+  const canvasRef = useRef(null);
+  const chartRef  = useRef(null);
   const [activeTab, setActiveTab] = useState(0);
-  const [loading, setLoading]     = useState(false);
 
   const tab = TABS[activeTab];
 
+  // ─── Phase 1 + Tab switch: render chart from pre-loaded history ───
   useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
+    const rows   = initialHistory[tab.key] || [];
+    const labels = rows.map(r => fmt(r.date));
+    // Apply light inversion on history values
+    const values = rows.map(r => invertLight(tab.key, r.value));
 
-    getSensorHistory({ sensorName: tab.key, limit: 30, sortBy: 'date', sortDir: 'ASC' })
-      .then(res => {
-        if (cancelled) return;
-        const rows = res.data || [];
-        const labels = rows.map(r => {
-          const d = new Date(r.date);
-          return `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
-        });
-        const values = rows.map(r => r.value);
+    const ctx = canvasRef.current;
+    if (!ctx) return;
 
-        const ctx = canvasRef.current;
-        if (!ctx) return;
+    const gradient = ctx.getContext('2d').createLinearGradient(0, 0, 0, 300);
+    gradient.addColorStop(0, `${tab.color}55`);
+    gradient.addColorStop(1, `${tab.color}00`);
 
-        // Tạo gradient
-        const gradient = ctx.getContext('2d').createLinearGradient(0, 0, 0, 300);
-        gradient.addColorStop(0, `${tab.color}55`);
-        gradient.addColorStop(1, `${tab.color}00`);
+    const yAxisConfig = getYAxisConfig(tab.key);
+    const tooltipLabel = getTooltipLabel(tab.key, tab.unit);
 
-        if (chartRef.current) {
-          // Update data chứ không tạo lại chart
-          chartRef.current.data.labels = labels;
-          chartRef.current.data.datasets[0].data = values;
-          chartRef.current.data.datasets[0].borderColor = tab.color;
-          chartRef.current.data.datasets[0].backgroundColor = gradient;
-          chartRef.current.update('active');
-        } else {
-          chartRef.current = new Chart(ctx, {
-            type: 'line',
-            data: {
-              labels,
-              datasets: [{
-                data: values,
-                borderColor: tab.color,
-                backgroundColor: gradient,
-                borderWidth: 2,
-                fill: true,
-                tension: 0.35,
-                pointRadius: 3,
-                pointBackgroundColor: tab.color,
-              }],
+    if (chartRef.current) {
+      const c = chartRef.current;
+      c.data.labels                        = labels;
+      c.data.datasets[0].data              = values;
+      c.data.datasets[0].borderColor       = tab.color;
+      c.data.datasets[0].backgroundColor   = gradient;
+      c.data.datasets[0].pointBackgroundColor = tab.color;
+      // Update Y-axis config
+      c.options.scales.y = { ...yAxisConfig };
+      c.options.plugins.tooltip.backgroundColor  = tab.color;
+      c.options.plugins.tooltip.callbacks.label  = tooltipLabel;
+      c.update('active');
+    } else {
+      chartRef.current = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            data: values,
+            borderColor: tab.color,
+            backgroundColor: gradient,
+            borderWidth: 2,
+            fill: true,
+            tension: 0.35,
+            pointRadius: 3,
+            pointBackgroundColor: tab.color,
+          }],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: tab.color,
+              titleColor: '#fff',
+              bodyColor: '#fff',
+              displayColors: false,
+              callbacks: { label: tooltipLabel },
             },
-            options: {
-              responsive: true,
-              maintainAspectRatio: false,
-              plugins: {
-                legend: { display: false },
-                tooltip: {
-                  backgroundColor: tab.color,
-                  titleColor: '#fff',
-                  bodyColor: '#fff',
-                  displayColors: false,
-                  callbacks: {
-                    label: ctx => `${ctx.parsed.y} ${tab.unit}`,
-                  },
-                },
-              },
-              scales: {
-                y: {
-                  beginAtZero: false,
-                  ticks: { color: '#888' },
-                  grid: { color: '#eef0f6' },
-                },
-                x: {
-                  ticks: { color: '#888', maxTicksLimit: 10 },
-                  grid: { display: false },
-                },
-              },
+          },
+          scales: {
+            y: { ...yAxisConfig },
+            x: {
+              ticks: { color: '#888', maxTicksLimit: 10 },
+              grid:  { display: false },
             },
-          });
-        }
-      })
-      .catch(console.error)
-      .finally(() => { if (!cancelled) setLoading(false); });
+          },
+        },
+      });
+    }
+  }, [activeTab, tab.key, tab.color, tab.unit, initialHistory]);
 
-    return () => { cancelled = true; };
-  }, [activeTab, tab.key, tab.color, tab.unit]);
+  // ─── Phase 2: Append real-time WebSocket point — sliding window 30 pts ───
+  useEffect(() => {
+    if (!latestData || !chartRef.current) return;
+    // latestData.light is already inverted by Dashboard's handleSensorPush
+    const val = latestData[tab.key];
+    if (val === undefined || val === null) return;
 
-  // Destroy chart on unmount
+    const d     = latestData.timestamp ? new Date(latestData.timestamp) : new Date();
+    const label = `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}:${d.getSeconds().toString().padStart(2,'0')}`;
+
+    const chart  = chartRef.current;
+    const labels = chart.data.labels;
+    const data   = chart.data.datasets[0].data;
+
+    if (labels.length > 0 && labels[labels.length - 1] === label) return;
+
+    labels.push(label);
+    data.push(val);
+
+    if (labels.length > 30) { labels.shift(); data.shift(); }
+
+    chart.update('none');
+  }, [latestData, tab.key]);
+
+  // ─── Cleanup on unmount ───
   useEffect(() => {
     return () => {
-      if (chartRef.current) {
-        chartRef.current.destroy();
-        chartRef.current = null;
-      }
+      if (chartRef.current) { chartRef.current.destroy(); chartRef.current = null; }
     };
   }, []);
+
+  const hasData = (initialHistory[tab.key] || []).length > 0;
 
   return (
     <div className="card chart-card">
@@ -161,9 +246,14 @@ export default function SensorChart() {
         </div>
       </div>
       <div className="chart-wrap" style={{ position: 'relative' }}>
-        {loading && (
-          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(255,255,255,0.7)', zIndex: 1 }}>
-            <div className="spinner" />
+        {!hasData && (
+          <div style={{
+            position: 'absolute', inset: 0, display: 'flex',
+            alignItems: 'center', justifyContent: 'center',
+            background: 'rgba(255,255,255,0.85)', zIndex: 1, borderRadius: 8,
+            color: 'var(--muted)', fontSize: 13,
+          }}>
+            Loading sensor history…
           </div>
         )}
         <canvas ref={canvasRef} />

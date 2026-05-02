@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import FilterBar from '../components/ui/FilterBar';
 import Pagination from '../components/ui/Pagination';
 import { getSensorHistory, normalizeDateTime } from '../services/api';
@@ -35,18 +35,18 @@ export default function SensorHistory() {
   const [sortBy, setSortBy]   = useState('date');
   const [sortDir, setSortDir] = useState('DESC');
 
-  const fetchData = useCallback(async (pg = 1, lmt = limit) => {
+  const fetchData = useCallback(async (pg = 1, lmt = limit, resetFilters = false) => {
     setLoading(true);
     setError(null);
     try {
       const params = {
         page: pg,
         limit: lmt,
-        sortBy,
-        sortDir,
-        ...(search    && { sensorName: search }),
-        ...(startDate && { startDate: normalizeDateTime(startDate) }),
-        ...(endDate   && { endDate:   normalizeDateTime(endDate)   }),
+        sortBy: resetFilters ? 'date' : sortBy,
+        sortDir: resetFilters ? 'DESC' : sortDir,
+        ...(!resetFilters && search    && { sensorName: search }),
+        ...(!resetFilters && startDate && { startDate: normalizeDateTime(startDate) }),
+        ...(!resetFilters && endDate   && { endDate:   normalizeDateTime(endDate)   }),
       };
       const res = await getSensorHistory(params);
       setRows(res.data || []);
@@ -66,8 +66,12 @@ export default function SensorHistory() {
   const handleReset = () => {
     setSearch(''); setStart(''); setEnd('');
     setSortBy('date'); setSortDir('DESC');
-    setRows([]); setTotal(0); setTotalPgs(1); setPage(1); setFetched(false);
+    fetchData(1, limit, true);
   };
+
+  useEffect(() => {
+    fetchData(1, limit);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSort = (col) => {
     const newDir = sortBy === col && sortDir === 'ASC' ? 'DESC' : 'ASC';
