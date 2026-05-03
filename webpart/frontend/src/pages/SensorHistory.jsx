@@ -99,6 +99,7 @@ export default function SensorHistory() {
   /* Filter state */
   const [sensorFilter, setSensorFilter] = useState('all');
   const [exactDate, setExactDate]       = useState('');
+  const [keyword, setKeyword]           = useState('');
 
   /* Sort state */
   const [sortBy, setSortBy]   = useState('date');
@@ -118,8 +119,11 @@ export default function SensorHistory() {
       const parsed = parseFlexibleDate(exactDate);
       if (parsed) params.exactDate = JSON.stringify(parsed);
     }
+    if (!reset && keyword.trim()) {
+      params.keyword = keyword.trim();
+    }
     return params;
-  }, [sortBy, sortDir, sensorFilter, exactDate]);
+  }, [sortBy, sortDir, sensorFilter, exactDate, keyword]);
 
   const fetchData = useCallback(async (pg = 1, lmt = limit, resetFilters = false) => {
     setLoading(true);
@@ -144,6 +148,7 @@ export default function SensorHistory() {
   const handleReset = () => {
     setSensorFilter('all');
     setExactDate('');
+    setKeyword('');
     setSortBy('date');
     setSortDir('DESC');
     fetchData(1, limit, true);
@@ -179,6 +184,8 @@ export default function SensorHistory() {
         onFilterChange={setSensorFilter}
         exactDate={exactDate}
         onExactDateChange={setExactDate}
+        keyword={keyword}
+        onKeywordChange={setKeyword}
         onApply={handleApply}
         onReset={handleReset}
       />

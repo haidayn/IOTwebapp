@@ -21,6 +21,18 @@ const DEVICE_OPTIONS = [
   { value: 'light', label: 'Light' },
 ];
 
+const ACTION_OPTIONS = [
+  { value: 'all', label: 'All Actions' },
+  { value: 'ON',  label: 'Turn ON' },
+  { value: 'OFF', label: 'Turn OFF' },
+];
+
+const RUNNING_OPTIONS = [
+  { value: 'all', label: 'All' },
+  { value: '1',   label: 'Running' },
+  { value: '0',   label: 'None' },
+];
+
 /**
  * Phân tích chuỗi thời gian linh hoạt → object các thành phần.
  *
@@ -92,8 +104,10 @@ export default function DeviceHistory() {
   const [fetched, setFetched]     = useState(false);
 
   /* Filter state */
-  const [deviceFilter, setDeviceFilter] = useState('all');
-  const [exactDate, setExactDate]       = useState('');
+  const [deviceFilter, setDeviceFilter]   = useState('all');
+  const [exactDate, setExactDate]         = useState('');
+  const [actionFilter, setActionFilter]   = useState('all');
+  const [runningFilter, setRunningFilter] = useState('all');
 
   const buildParams = useCallback((pg, lmt, reset = false) => {
     const params = { page: pg, limit: lmt };
@@ -104,8 +118,14 @@ export default function DeviceHistory() {
       const parsed = parseFlexibleDate(exactDate);
       if (parsed) params.exactDate = JSON.stringify(parsed);
     }
+    if (!reset && actionFilter !== 'all') {
+      params.actionFilter = actionFilter; // 'ON' | 'OFF'
+    }
+    if (!reset && runningFilter !== 'all') {
+      params.runningFilter = runningFilter; // '1' | '0'
+    }
     return params;
-  }, [deviceFilter, exactDate]);
+  }, [deviceFilter, exactDate, actionFilter, runningFilter]);
 
   const fetchData = useCallback(async (pg = 1, lmt = limit, resetFilters = false) => {
     setLoading(true);
@@ -130,6 +150,8 @@ export default function DeviceHistory() {
   const handleReset = () => {
     setDeviceFilter('all');
     setExactDate('');
+    setActionFilter('all');
+    setRunningFilter('all');
     fetchData(1, limit, true);
   };
 
@@ -149,6 +171,20 @@ export default function DeviceHistory() {
         filterOptions={DEVICE_OPTIONS}
         filterValue={deviceFilter}
         onFilterChange={setDeviceFilter}
+        extraSelects={[
+          {
+            label:    'Action',
+            options:  ACTION_OPTIONS,
+            value:    actionFilter,
+            onChange: setActionFilter,
+          },
+          {
+            label:    'Running',
+            options:  RUNNING_OPTIONS,
+            value:    runningFilter,
+            onChange: setRunningFilter,
+          },
+        ]}
         exactDate={exactDate}
         onExactDateChange={setExactDate}
         onApply={handleApply}

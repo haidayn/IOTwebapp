@@ -10,12 +10,11 @@
  *   exactDate         {string}                   - chuỗi thời gian người dùng nhập (raw text)
  *   onExactDateChange {function(value)}
  *
+ *   keyword           {string}                   - tìm kiếm theo giá trị cảm biến (tùy chọn)
+ *   onKeywordChange   {function(value)}
+ *
  *   onApply           {function} - gọi khi bấm Search
  *   onReset           {function} - reset toàn bộ filter
- *
- * Format exactDate hỗ trợ (linh hoạt):
- *   dd/mm/yyyy hh:mm:ss | dd/mm/yyyy hh:mm | dd/mm/yyyy hh | dd/mm/yyyy
- *   mm/yyyy | dd/mm | yyyy | hh:mm:ss | hh:mm | hh
  */
 import { useRef, useState } from 'react';
 
@@ -24,8 +23,11 @@ export default function FilterBar({
   filterOptions = [],
   filterValue = 'all',
   onFilterChange,
+  extraSelects = [],   // [{ label, options:[{value,label}], value, onChange }]
   exactDate = '',
   onExactDateChange,
+  keyword = '',
+  onKeywordChange,
   onApply,
   onReset,
 }) {
@@ -80,6 +82,22 @@ export default function FilterBar({
         </select>
       </div>
 
+      {/* Extra dropdowns (ví dụ: Action, Running) được inject từ trang cha */}
+      {extraSelects.map((sel, i) => (
+        <div className="filter-select-wrap" key={i}>
+          <label className="filter-select-label">{sel.label}</label>
+          <select
+            className="filter-select"
+            value={sel.value}
+            onChange={e => sel.onChange(e.target.value)}
+          >
+            {sel.options.map(opt => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+        </div>
+      ))}
+
       {/* Exact datetime text input + picker */}
       <div className="datetime-wrap">
         <div className="datetime-input-group">
@@ -121,6 +139,26 @@ export default function FilterBar({
           </div>
         )}
       </div>
+
+      {/* Value search — chỉ hiển thị khi có prop onKeywordChange */}
+      {onKeywordChange !== undefined && (
+        <div className="datetime-wrap" style={{ minWidth: 140, maxWidth: 200 }}>
+          <div className="datetime-input-group">
+            <svg className="dt-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="11" cy="11" r="7"/>
+              <path d="m21 21-4.3-4.3"/>
+            </svg>
+            <input
+              type="text"
+              className="datetime-text"
+              placeholder="Value (e.g. 35.5)"
+              value={keyword}
+              onChange={e => onKeywordChange(e.target.value)}
+              onKeyDown={handleKeyDown}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Actions */}
       <button className="btn-primary" onClick={onApply}>

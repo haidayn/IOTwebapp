@@ -63,7 +63,7 @@ export default function Profile() {
         <div className="profile-links">
           <a
             className="link-pill"
-            href="https://github.com/haidayn/IOTwebapp"
+            href="https://github.com/haidayn/IOTwebapp/tree/master"
             target="_blank"
             rel="noopener noreferrer"
           >

@@ -1,24 +1,29 @@
-const { Op, fn, col, where: seqWhere } = require('sequelize');
-const { Device, DeviceAction } = require('../models');
-const { publishDeviceControl } = require('../services/mqttService');
+const { Op, fn, col, where: seqWhere } = require('sequelize'); // Import các toán tử và hàm của Sequelize để thao tác với CSDL
+const { Device, DeviceAction } = require('../models'); // Import model Device và DeviceAction (đại diện cho bảng thiết bị và lịch sử điều khiển)
+const { publishDeviceControl } = require('../services/mqttService'); // Import hàm từ mqttService để gửi lệnh xuống phần cứng
 
 /**
  * Xây dựng mảng conditions Sequelize cho exactDate linh hoạt.
+ * Chức năng này nhận đầu vào là các thành phần thời gian và trả về mảng các câu lệnh điều kiện SQL.
  * parsed = { year?, month?, day?, hour?, minute?, second? }
  *
- * Trả về mảng conditions[] để ghép vào Op.and — tránh conflict với các filter khác.
- * Dùng tên cột đầy đủ (qualified) để tránh lỗi "ambiguous column" khi có JOIN.
+ * Trả về mảng conditions[] để ghép vào Op.and — tránh conflict với các bộ lọc khác.
+ * Dùng tên cột đầy đủ (qualified: ví dụ 'DeviceAction.date') để tránh lỗi "ambiguous column" khi JOIN 2 bảng.
  *
- * @param {object} parsed       - object các thành phần thời gian
- * @param {string} qualifiedCol - tên cột đầy đủ, ví dụ 'DeviceAction.date'
+ * @param {object} parsed       - Object chứa các thuộc tính thời gian cần lọc
+ * @param {string} qualifiedCol - Tên cột đầy đủ bao gồm cả tên bảng, ví dụ 'DeviceAction.date'
  */
 function buildExactDateConditions(parsed, qualifiedCol) {
+    // Nếu tham số rỗng, trả về mảng rỗng (không áp dụng điều kiện lọc thời gian)
     if (!parsed || Object.keys(parsed).length === 0) return [];
 
+    // Giải nén các thuộc tính thời gian từ object
     const { year, month, day, hour, minute, second } = parsed;
-    const bareField = qualifiedCol.split('.').pop(); // tên field ngắn cho range query
+    // Tách lấy tên field ngắn (vd: 'date') để dùng trong các truy vấn tạo khoảng (range)
+    const bareField = qualifiedCol.split('.').pop(); 
 
-    // Nếu có year → build range [start, end] theo đơn vị nhỏ nhất
+    // TRƯỜNG HỢP 1: NẾU CÓ NĂM (YEAR)
+    // Nếu người dùng cung cấp năm, ta có thể tạo ra một mốc thời gian bắt đầu và kết thúc cụ thể
     if (year) {
         const y  = year;
         const mo = month  ?? null;
@@ -29,30 +34,40 @@ function buildExactDateConditions(parsed, qualifiedCol) {
 
         let start, end;
 
+        // Phân rã độ ưu tiên: Càng cung cấp chi tiết thì khoảng thời gian (start -> end) càng thu hẹp
         if (mo !== null && d !== null && h !== null && mi !== null && se !== null) {
+            // Chính xác tới cấp độ giây
             start = new Date(y, mo-1, d, h, mi, se);
-            end   = new Date(y, mo-1, d, h, mi, se, 999);
+            end   = new Date(y, mo-1, d, h, mi, se, 999); // Cộng 999 mili-giây để lấy trọn giây đó
         } else if (mo !== null && d !== null && h !== null && mi !== null) {
+            // Chính xác tới cấp độ phút
             start = new Date(y, mo-1, d, h, mi, 0);
             end   = new Date(y, mo-1, d, h, mi, 59, 999);
         } else if (mo !== null && d !== null && h !== null) {
+            // Chính xác tới cấp độ giờ
             start = new Date(y, mo-1, d, h, 0, 0);
             end   = new Date(y, mo-1, d, h, 59, 59, 999);
         } else if (mo !== null && d !== null) {
+            // Lọc theo trọn 1 ngày trong năm
             start = new Date(y, mo-1, d, 0, 0, 0);
             end   = new Date(y, mo-1, d, 23, 59, 59, 999);
         } else if (mo !== null) {
+            // Lọc theo trọn 1 tháng trong năm (từ ngày 1 đến ngày cuối cùng của tháng)
             start = new Date(y, mo-1, 1, 0, 0, 0);
             end   = new Date(y, mo, 0, 23, 59, 59, 999);
         } else {
+            // Lọc theo trọn 1 năm (Từ 1/1 đến 31/12)
             start = new Date(y, 0, 1, 0, 0, 0);
             end   = new Date(y, 11, 31, 23, 59, 59, 999);
         }
 
+        // Trả về điều kiện Sequelize: bareField phải nằm trong khoảng [start, end]
         return [{ [bareField]: { [Op.between]: [start, end] } }];
     }
 
-    // Không có year → dùng MySQL date functions với qualified column
+    // TRƯỜNG HỢP 2: KHÔNG CÓ NĂM (YEAR)
+    // Người dùng chỉ tìm theo các thành phần lặp lại (ví dụ: mọi lúc 14:30 mỗi ngày, hoặc mọi tháng 5)
+    // Ta sử dụng các hàm built-in của MySQL (MONTH, DAY, HOUR...) so khớp với cột qualifiedCol
     const conditions = [];
     if (month  !== undefined) conditions.push(seqWhere(fn('MONTH',  col(qualifiedCol)), month));
     if (day    !== undefined) conditions.push(seqWhere(fn('DAY',    col(qualifiedCol)), day));
@@ -63,69 +78,84 @@ function buildExactDateConditions(parsed, qualifiedCol) {
     return conditions;
 }
 
-// GET /api/device/status
-// Chỉ lấy action có Status='success' gần nhất — truth source thực sự của hardware
+// ============================================================================
+// API: GET /api/device/status
+// Lấy trạng thái ON/OFF hiện tại của tất cả các thiết bị.
+// ============================================================================
 const getStatus = async (req, res, next) => {
     try {
+        // Lấy danh sách tất cả các thiết bị từ cơ sở dữ liệu
         const devices = await Device.findAll();
-        const status = {};
+        const status = {}; // Khởi tạo object để map tên thiết bị -> trạng thái (true/false)
 
         for (const device of devices) {
+            // Với mỗi thiết bị, tìm bản ghi điều khiển gần nhất CÓ TRẠNG THÁI 'success'
+            // Việc lấy 'success' đảm bảo đây là trạng thái thực sự do phần cứng xác nhận (truth source),
+            // bỏ qua các lệnh bị 'failed' hoặc đang 'pending' chưa rõ kết quả.
             const latest = await DeviceAction.findOne({
                 where: {
                     IDdev:  device.IDdev,
-                    Status: 'success',
+                    Status: 'success', // Điều kiện cốt lõi của tính năng đồng bộ
                 },
-                order: [['date', 'DESC']],
+                order: [['date', 'DESC']], // Sắp xếp giảm dần theo thời gian để lấy cái mới nhất
             });
+            // Nếu có dữ liệu, gán true nếu running == 1, ngược lại false (mặc định false nếu không có data)
             status[device.nameDev] = latest ? (latest.running === 1) : false;
         }
 
+        // Trả về JSON cho Frontend
         res.json(status);
     } catch (err) {
-        next(err);
+        next(err); // Đẩy lỗi cho Error Handler của Express
     }
 };
 
-// GET /api/device-actions
-// Query params: page, limit, deviceName, exactDate (JSON string), keyword (legacy)
+// ============================================================================
+// API: GET /api/device-actions
+// Lấy danh sách lịch sử điều khiển thiết bị (có hỗ trợ lọc và phân trang).
+// ============================================================================
 const getHistory = async (req, res, next) => {
     try {
-        const page       = parseInt(req.query.page)  || 1;
-        const limit      = parseInt(req.query.limit) || 10;
-        const offset     = (page - 1) * limit;
+        // Xử lý các tham số phân trang
+        const page       = parseInt(req.query.page)  || 1; // Trang hiện tại (mặc định 1)
+        const limit      = parseInt(req.query.limit) || 10; // Số bản ghi mỗi trang (mặc định 10)
+        const offset     = (page - 1) * limit; // Tính toán vị trí bỏ qua (dùng cho SQL LIMIT/OFFSET)
+        
+        // Nhận tham số tìm kiếm
         const keyword    = req.query.keyword    || '';
         const deviceName = req.query.deviceName || '';
 
-        // Tập hợp tất cả conditions vào 1 mảng Op.and để tránh overwrite
+        // Khởi tạo mảng chứa TẤT CẢ các điều kiện (để gộp chung bằng Op.and, tránh xung đột)
         const andConditions = [];
 
-        // Exact datetime filter (linh hoạt)
+        // 1. Xử lý bộ lọc ExactDate (định dạng ngày tháng linh hoạt truyền từ frontend dạng JSON)
         if (req.query.exactDate) {
             try {
-                const parsed = JSON.parse(req.query.exactDate);
-                // 'DeviceAction.date' — qualified để tránh ambiguous khi JOIN với Device
+                const parsed = JSON.parse(req.query.exactDate); // Parse JSON chuỗi ngày
+                // Gọi hàm buildExactDateConditions, dùng tên cột đầy đủ 'DeviceAction.date'
                 const conds = buildExactDateConditions(parsed, 'DeviceAction.date');
-                andConditions.push(...conds);
+                andConditions.push(...conds); // Thêm các điều kiện trả về vào mảng chung
             } catch (e) {
                 console.warn('[DeviceController] Invalid exactDate JSON:', req.query.exactDate);
             }
         }
 
-        // Legacy fromDate/toDate (backward compat)
+        // 2. Tương thích ngược (Backward compatibility) cho các request dùng fromDate/toDate cũ
         if (!req.query.exactDate) {
             const fromDate = req.query.fromDate || null;
             const toDate   = req.query.toDate   || null;
-            if (fromDate) andConditions.push({ date: { [Op.gte]: new Date(fromDate) } });
-            if (toDate)   andConditions.push({ date: { [Op.lte]: new Date(toDate) } });
+            if (fromDate) andConditions.push({ date: { [Op.gte]: new Date(fromDate) } }); // Lớn hơn hoặc bằng
+            if (toDate)   andConditions.push({ date: { [Op.lte]: new Date(toDate) } });   // Nhỏ hơn hoặc bằng
         }
 
-        // Keyword filter (on/off/fail/#ID) — thêm trực tiếp vào andConditions
+        // 3. Xử lý bộ lọc Từ khóa (Keyword filter)
         if (keyword) {
             if (keyword.startsWith('#')) {
+                // Nếu bắt đầu bằng # -> Ưu tiên tìm kiếm chính xác theo ID bản ghi
                 const idSearch = keyword.substring(1);
                 andConditions.push({ IDactionData: { [Op.like]: `%${idSearch}%` } });
             } else {
+                // Tìm kiếm tổng quát theo chữ
                 const kLower = keyword.toLowerCase().trim();
                 if (kLower === 'on') {
                     andConditions.push({ Action: 'ON', Status: 'success' });
@@ -134,6 +164,7 @@ const getHistory = async (req, res, next) => {
                 } else if (kLower === 'fail' || kLower === 'failed') {
                     andConditions.push({ Status: 'failed' });
                 } else {
+                    // Cú pháp OR cho phép tìm text trong cột Action HOẶC cột Status
                     andConditions.push({
                         [Op.or]: [
                             { Action: { [Op.like]: `%${keyword}%` } },
@@ -144,45 +175,64 @@ const getHistory = async (req, res, next) => {
             }
         }
 
+        // 4. Lọc theo Action (ON / OFF) — dropdown từ frontend
+        if (req.query.actionFilter && req.query.actionFilter !== 'all') {
+            andConditions.push({ Action: req.query.actionFilter.toUpperCase() });
+        }
+
+        // 5. Lọc theo Running (1 = đang bật, 0 = đã tắt) — dropdown từ frontend
+        if (req.query.runningFilter !== undefined && req.query.runningFilter !== 'all') {
+            andConditions.push({ running: parseInt(req.query.runningFilter) });
+        }
+
+        // Tổng hợp where clause từ mảng andConditions, nếu mảng rỗng thì where là object rỗng
         const where = andConditions.length > 0 ? { [Op.and]: andConditions } : {};
 
-        // Device name filter
+        // 4. Xử lý bộ lọc theo tên thiết bị riêng biệt
+        // Nếu chọn một thiết bị cụ thể (!== 'all'), tạo điều kiện lọc bên bảng Device
         const deviceWhere = deviceName && deviceName !== 'all' ? { nameDev: deviceName } : undefined;
 
+        // Truy vấn CSDL bằng Sequelize, kết hợp đếm tổng số bản ghi (findAndCountAll)
         const { count, rows } = await DeviceAction.findAndCountAll({
-            where,
+            where, // Gắn điều kiện đã tổng hợp ở trên
             include: [{
-                model:      Device,
-                as:         'device',
-                attributes: ['nameDev'],
-                where:      deviceWhere,
-                required:   !!deviceWhere,
+                model:      Device,     // JOIN với bảng Device
+                as:         'device',   // Dùng alias 'device'
+                attributes: ['nameDev'], // Chỉ lấy cột nameDev cho nhẹ
+                where:      deviceWhere,// Gắn điều kiện lọc tên thiết bị
+                required:   !!deviceWhere, // Nếu có lọc thì INNER JOIN (bắt buộc khớp), nếu không thì LEFT JOIN
             }],
-            order:  [['date', 'DESC']],
-            limit,
-            offset,
+            order:  [['date', 'DESC']], // Sắp xếp mới nhất lên đầu
+            limit,   // Cắt số lượng hiển thị
+            offset,  // Bỏ qua các bản ghi trang trước
         });
 
+        // 5. Chuẩn hóa dữ liệu đầu ra (Normalize output) cho khớp với model phía Frontend
         const data = rows.map(r => ({
             ID:      r.IDactionData,
             action:  r.Action,
             status:  r.Status ? r.Status.toLowerCase() : 'unknown',
             running: r.running,
             date:    r.date,
-            device:  { name: r.device?.nameDev },
+            device:  { name: r.device?.nameDev }, // Lấy tên device từ bảng đã JOIN
         }));
 
+        // Trả về tổng số lượng, trang hiện tại, tổng số trang, và tập dữ liệu
         res.json({ total: count, page, totalPages: Math.ceil(count / limit), data });
     } catch (err) {
-        next(err);
+        next(err); // Đẩy lỗi cho Error Handler
     }
 };
 
-// POST /api/device/control
+// ============================================================================
+// API: POST /api/device/control
+// Tiếp nhận yêu cầu điều khiển bật/tắt thiết bị từ Frontend và gửi xuống phần cứng.
+// ============================================================================
 const control = async (req, res, next) => {
     try {
-        const { device: deviceName, action } = req.body;
+        const { device: deviceName, action } = req.body; // Lấy dữ liệu từ Payload request
 
+        // Validate cơ bản
         if (!deviceName || !action) {
             return res.status(400).json({ error: 'device and action are required' });
         }
@@ -190,40 +240,55 @@ const control = async (req, res, next) => {
             return res.status(400).json({ error: 'action must be ON or OFF' });
         }
 
+        // Kiểm tra thiết bị có tồn tại trong CSDL hay không
         const device = await Device.findOne({ where: { nameDev: deviceName } });
         if (!device) {
             return res.status(404).json({ error: `Device "${deviceName}" not found` });
         }
 
+        // TẠO BẢN GHI LOG PENDING: Lưu dấu vết thao tác người dùng trước khi gửi lệnh thực sự
         const log = await DeviceAction.create({
             IDdev:   device.IDdev,
             Action:  action,
-            Status:  'pending',
-            running: 0,
+            Status:  'pending', // Lệnh đang chờ phần cứng xác nhận
+            running: 0,         // Giá trị mặc định, chỉ thay đổi sau khi phần cứng phản hồi 'success'
             date:    new Date(),
         });
 
+        // Gửi lệnh qua MQTT Broker tới phần cứng thông qua dịch vụ mqttService
         publishDeviceControl(deviceName, action);
 
-        // Timeout 6s: nếu không nhận được ack từ hardware → mark failed + rollback UI
+        // THIẾT LẬP TIMEOUT BẢO VỆ (Timeout Rollback Guard):
+        // Chờ tối đa 6 giây (6000ms). Nếu phần cứng không gửi tín hiệu xác nhận phản hồi về lại (qua mqttService),
+        // API sẽ tự động xử lý lỗi này ngầm bên dưới.
         setTimeout(async () => {
             try {
+                // Lấy lại bản ghi log từ DB để xem trạng thái đã được update bởi mqttService chưa
                 const checkLog = await DeviceAction.findByPk(log.IDactionData);
+                // Nếu vẫn kẹt ở trạng thái 'pending' -> Thiết bị rớt mạng / Không hồi đáp
                 if (checkLog && checkLog.Status === 'pending') {
+                    // Sửa bản ghi trong DB thành failed để chốt sổ lịch sử
                     await checkLog.update({ Status: 'failed', running: 0 });
+                    
+                    // Phát (emit) 1 tin nhắn qua WebSocket báo cho Frontend biết lệnh đã timeout
+                    // Frontend sẽ bắt sự kiện này và gạt công tắc (toggle) trở lại vị trí ban đầu (Rollback UI)
                     const { pushDeviceStatus } = require('../services/websocketService');
                     pushDeviceStatus({ device: deviceName, is_on: false, error: 'timeout' });
+                    
                     console.warn(`[DeviceControl] Timeout (6s): ${deviceName} → marked failed`);
                 }
             } catch (err) {
                 console.error('Timeout check error:', err);
             }
-        }, 6000);
+        }, 6000); // Ngưỡng timeout 6 giây được quy định tại bản cập nhật tối ưu hiệu năng
 
+        // Phản hồi về Frontend ngay lập tức rằng "lệnh đã được tiếp nhận và đang xử lý"
+        // Frontend sẽ hiển thị Loading Spinner chờ.
         res.json({ success: true, log });
     } catch (err) {
         next(err);
     }
 };
 
+// Xuất các hàm Controller để file Router (deviceRoutes.js) có thể sử dụng
 module.exports = { getStatus, getHistory, control };
