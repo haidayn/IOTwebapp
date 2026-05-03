@@ -142,9 +142,15 @@ export default function Dashboard() {
     try {
       await controlDevice(deviceKey, action);              // Bước 3: POST /api/device/control
     } catch (err) {
-      /* HTTP error → immediate rollback without waiting for WS */
+      /* HTTP error → rollback: re-fetch DB để lấy trạng thái thực (update-note §2) */
+      try {
+        const freshStatus = await getDeviceStatus();
+        setDevStatus(freshStatus);
+      } catch {
+        // Nếu cả DB fetch cũng lỗi → giữ nguyên state hiện tại
+      }
       setPending(prev => ({ ...prev, [deviceKey]: false }));
-      showToast(`Không gửi được lệnh: ${err.message}`, 'error');
+      showToast(`Không gửi được lệnh "${deviceKey}": ${err.message}`, 'error');
     }
   };
 

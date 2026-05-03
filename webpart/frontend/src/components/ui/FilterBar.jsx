@@ -1,68 +1,126 @@
 /**
- * FilterBar — Thanh lọc dùng chung cho Sensor/Device History
+ * FilterBar — Thanh lọc dùng chung cho Sensor/Device History (v2)
  *
  * Props:
- *   searchPlaceholder {string}
- *   searchValue       {string}
- *   onSearchChange    {function(value)}
+ *   filterLabel       {string}                  - nhãn dropdown (e.g. "Select Sensor")
+ *   filterOptions     {Array<{value,label}>}     - danh sách option, value='all' là mặc định
+ *   filterValue       {string}                   - giá trị đang chọn
+ *   onFilterChange    {function(value)}
  *
- *   startDate         {string}   - datetime-local value
- *   endDate           {string}   - datetime-local value
- *   onStartChange     {function(value)}
- *   onEndChange       {function(value)}
+ *   exactDate         {string}                   - chuỗi thời gian người dùng nhập (raw text)
+ *   onExactDateChange {function(value)}
  *
  *   onApply           {function} - gọi khi bấm Search
  *   onReset           {function} - reset toàn bộ filter
+ *
+ * Format exactDate hỗ trợ (linh hoạt):
+ *   dd/mm/yyyy hh:mm:ss | dd/mm/yyyy hh:mm | dd/mm/yyyy hh | dd/mm/yyyy
+ *   mm/yyyy | dd/mm | yyyy | hh:mm:ss | hh:mm | hh
  */
+import { useRef, useState } from 'react';
+
 export default function FilterBar({
-  searchPlaceholder = 'Search…',
-  searchValue = '',
-  onSearchChange,
-  startDate = '',
-  endDate = '',
-  onStartChange,
-  onEndChange,
+  filterLabel = 'Select…',
+  filterOptions = [],
+  filterValue = 'all',
+  onFilterChange,
+  exactDate = '',
+  onExactDateChange,
   onApply,
   onReset,
 }) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const pickerRef = useRef(null);
+
+  /* Khi người dùng chọn qua picker (datetime-local) → convert sang
+     dd/mm/yyyy hh:mm:ss để hiển thị trong text input */
+  const handlePickerChange = (e) => {
+    const val = e.target.value; // "yyyy-mm-ddThh:mm"
+    if (!val) return;
+    const [datePart, timePart] = val.split('T');
+    const [y, m, d] = datePart.split('-');
+    const timeStr = timePart ? ` ${timePart}:00` : '';
+    onExactDateChange?.(`${d}/${m}/${y}${timeStr}`);
+    setPickerOpen(false);
+  };
+
   const handleKeyDown = (e) => {
     if (e.key === 'Enter') onApply?.();
   };
 
+  /* Chuyển dd/mm/yyyy hh:mm:ss → yyyy-mm-ddThh:mm để set giá trị picker */
+  const toPickerValue = () => {
+    if (!exactDate) return '';
+    const parts = exactDate.trim().split(/\s+/);
+    const datePart = parts[0] || '';
+    const timePart = parts[1] || '';
+    const dp = datePart.split('/');
+    let yyyy = '', mm = '', dd = '';
+    if (dp.length === 3) { [dd, mm, yyyy] = dp; }
+    else if (dp.length === 2) { [mm, yyyy] = dp; dd = '01'; }
+    else if (dp.length === 1 && dp[0].length === 4) { yyyy = dp[0]; mm = '01'; dd = '01'; }
+    if (!yyyy || !mm || !dd) return '';
+    const tp = timePart ? timePart.substring(0, 5) : '00:00';
+    return `${yyyy}-${mm.padStart(2,'0')}-${dd.padStart(2,'0')}T${tp}`;
+  };
+
   return (
     <div className="filter-bar">
-      {/* Search input */}
-      <div className="search">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <circle cx="11" cy="11" r="7"/>
-          <path d="m21 21-4.3-4.3"/>
-        </svg>
-        <input
-          type="text"
-          placeholder={searchPlaceholder}
-          value={searchValue}
-          onChange={e => onSearchChange?.(e.target.value)}
-          onKeyDown={handleKeyDown}
-        />
+      {/* Dropdown selector */}
+      <div className="filter-select-wrap">
+        <label className="filter-select-label">{filterLabel}</label>
+        <select
+          className="filter-select"
+          value={filterValue}
+          onChange={e => onFilterChange?.(e.target.value)}
+        >
+          {filterOptions.map(opt => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
       </div>
 
-      {/* Date range */}
-      <label>From</label>
-      <input
-        type="datetime-local"
-        value={startDate}
-        onChange={e => onStartChange?.(e.target.value)}
-        step="1"
-        title="Hỗ trợ HH:mm:ss"
-      />
-      <label>To</label>
-      <input
-        type="datetime-local"
-        value={endDate}
-        onChange={e => onEndChange?.(e.target.value)}
-        step="1"
-        title="Hỗ trợ HH:mm:ss"
-      />
+      {/* Exact datetime text input + picker */}
+      <div className="datetime-wrap">
+        <div className="datetime-input-group">
+          <svg className="dt-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+            <line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/>
+            <line x1="3" y1="10" x2="21" y2="10"/>
+          </svg>
+          <input
+            type="text"
+            className="datetime-text"
+            placeholder="dd/mm/yyyy hh:mm:ss"
+            value={exactDate}
+            onChange={e => onExactDateChange?.(e.target.value)}
+            onKeyDown={handleKeyDown}
+          />
+          {/* Nút mở native datetime picker */}
+          <button
+            className="dt-picker-btn"
+            title="Chọn thời gian"
+            onClick={() => setPickerOpen(v => !v)}
+            type="button"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
+              <path d="m6 9 6 6 6-6"/>
+            </svg>
+          </button>
+        </div>
+        {pickerOpen && (
+          <div className="dt-picker-popup">
+            <input
+              ref={pickerRef}
+              type="datetime-local"
+              step="1"
+              value={toPickerValue()}
+              onChange={handlePickerChange}
+              autoFocus
+            />
+          </div>
+        )}
+      </div>
 
       {/* Actions */}
       <button className="btn-primary" onClick={onApply}>

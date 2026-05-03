@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import FilterBar from '../components/ui/FilterBar';
 import Pagination from '../components/ui/Pagination';
-import { getSensorHistory, normalizeDateTime } from '../services/api';
+import { getSensorHistory } from '../services/api';
 
 /* Format date string */
 const fmtDate = (str) => {
@@ -16,6 +16,76 @@ const fmtDate = (str) => {
 /* Unit mapping per sensor name */
 const UNITS = { temperature: '°C', humidity: '%', light: 'lux' };
 
+/* Dropdown options */
+const SENSOR_OPTIONS = [
+  { value: 'all',         label: 'All Sensors' },
+  { value: 'temperature', label: 'Temperature' },
+  { value: 'humidity',    label: 'Humidity' },
+  { value: 'light',       label: 'Light' },
+];
+
+/**
+ * Phân tích chuỗi thời gian linh hoạt → object các thành phần.
+ *
+ * QUY TẪC:
+ *   "/" là dấu phân cách ngày/tháng/năm  → dd/mm/yyyy | mm/yyyy | dd/mm
+ *   ":" là dấu phân cách giờ:phút:giây  → hh:mm:ss | hh:mm
+ *   số đơn lẻ 4 chữ số              → yyyy
+ *   số đơn lẻ ≤ 23                    → hh
+ *
+ * Có thể kết hợp bất kỳ thành phần nào cách nhau bằng khoảng trắng.
+ * Ví dụ: "03/05" | "14:30" | "14" | "05/2026" | "03/05/2026 14:30"
+ *
+ * Returns { year?, month?, day?, hour?, minute?, second? } hoặc null nếu không parse được.
+ */
+function parseFlexibleDate(raw) {
+  if (!raw || !raw.trim()) return null;
+  const result = {};
+
+  for (const token of raw.trim().split(/\s+/)) {
+    if (token.includes('/')) {
+      // --- Phần ngày: dấu "/" ---
+      const dp = token.split('/');
+      if (dp.length === 3) {
+        // dd/mm/yyyy
+        const d = parseInt(dp[0]), m = parseInt(dp[1]), y = parseInt(dp[2]);
+        if (!isNaN(d)) result.day   = d;
+        if (!isNaN(m)) result.month = m;
+        if (!isNaN(y)) result.year  = y;
+      } else if (dp.length === 2) {
+        const a = parseInt(dp[0]), b = parseInt(dp[1]);
+        if (!isNaN(a) && !isNaN(b)) {
+          if (b >= 1000) {
+            // mm/yyyy
+            result.month = a;
+            result.year  = b;
+          } else {
+            // dd/mm
+            result.day   = a;
+            result.month = b;
+          }
+        }
+      }
+    } else if (token.includes(':')) {
+      // --- Phần thời gian: dấu ":" ---
+      const tp = token.split(':');
+      const h  = parseInt(tp[0]);
+      if (!isNaN(h)) result.hour = h;
+      if (tp.length >= 2) { const mi = parseInt(tp[1]); if (!isNaN(mi)) result.minute = mi; }
+      if (tp.length >= 3) { const s  = parseInt(tp[2]); if (!isNaN(s))  result.second = s;  }
+    } else {
+      // --- Số đơn lẻ ---
+      const a = parseInt(token);
+      if (!isNaN(a)) {
+        if (token.length === 4) result.year = a;  // yyyy
+        else if (a <= 23)       result.hour = a;  // hh
+      }
+    }
+  }
+
+  return Object.keys(result).length ? result : null;
+}
+
 export default function SensorHistory() {
   const [rows, setRows]           = useState([]);
   const [total, setTotal]         = useState(0);
@@ -27,27 +97,35 @@ export default function SensorHistory() {
   const [fetched, setFetched]     = useState(false);
 
   /* Filter state */
-  const [search, setSearch]   = useState('');   // sensor name filter
-  const [startDate, setStart] = useState('');
-  const [endDate, setEnd]     = useState('');
+  const [sensorFilter, setSensorFilter] = useState('all');
+  const [exactDate, setExactDate]       = useState('');
 
   /* Sort state */
   const [sortBy, setSortBy]   = useState('date');
   const [sortDir, setSortDir] = useState('DESC');
 
+  const buildParams = useCallback((pg, lmt, reset = false) => {
+    const params = {
+      page: pg,
+      limit: lmt,
+      sortBy:  reset ? 'date' : sortBy,
+      sortDir: reset ? 'DESC' : sortDir,
+    };
+    if (!reset && sensorFilter && sensorFilter !== 'all') {
+      params.sensorName = sensorFilter;
+    }
+    if (!reset && exactDate.trim()) {
+      const parsed = parseFlexibleDate(exactDate);
+      if (parsed) params.exactDate = JSON.stringify(parsed);
+    }
+    return params;
+  }, [sortBy, sortDir, sensorFilter, exactDate]);
+
   const fetchData = useCallback(async (pg = 1, lmt = limit, resetFilters = false) => {
     setLoading(true);
     setError(null);
     try {
-      const params = {
-        page: pg,
-        limit: lmt,
-        sortBy: resetFilters ? 'date' : sortBy,
-        sortDir: resetFilters ? 'DESC' : sortDir,
-        ...(!resetFilters && search    && { sensorName: search }),
-        ...(!resetFilters && startDate && { startDate: normalizeDateTime(startDate) }),
-        ...(!resetFilters && endDate   && { endDate:   normalizeDateTime(endDate)   }),
-      };
+      const params = buildParams(pg, lmt, resetFilters);
       const res = await getSensorHistory(params);
       setRows(res.data || []);
       setTotal(res.total || 0);
@@ -59,13 +137,15 @@ export default function SensorHistory() {
     } finally {
       setLoading(false);
     }
-  }, [limit, search, startDate, endDate, sortBy, sortDir]);
+  }, [limit, buildParams]);
 
   const handleApply = () => fetchData(1, limit);
 
   const handleReset = () => {
-    setSearch(''); setStart(''); setEnd('');
-    setSortBy('date'); setSortDir('DESC');
+    setSensorFilter('all');
+    setExactDate('');
+    setSortBy('date');
+    setSortDir('DESC');
     fetchData(1, limit, true);
   };
 
@@ -93,13 +173,12 @@ export default function SensorHistory() {
       <h1 className="page-title">Sensor History</h1>
 
       <FilterBar
-        searchPlaceholder="Filter by sensor name (temperature / humidity / light)"
-        searchValue={search}
-        onSearchChange={setSearch}
-        startDate={startDate}
-        endDate={endDate}
-        onStartChange={setStart}
-        onEndChange={setEnd}
+        filterLabel="Select Sensor"
+        filterOptions={SENSOR_OPTIONS}
+        filterValue={sensorFilter}
+        onFilterChange={setSensorFilter}
+        exactDate={exactDate}
+        onExactDateChange={setExactDate}
         onApply={handleApply}
         onReset={handleReset}
       />
