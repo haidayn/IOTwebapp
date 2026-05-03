@@ -1,19 +1,19 @@
 require('dotenv').config();
 const mqtt = require('mqtt');
+const { Op } = require('sequelize');
 const { Sensor, SensorData, Device, DeviceAction } = require('../models');
 const { pushSensorData, pushDeviceStatus } = require('./websocketService');
 
 // ============================================================
-// MQTT Topics — matching actual hardware (espCODE.cpp)
+// MQTT Topics — matching hardware (espCODE.cpp)
 // ============================================================
 const TOPIC_SENSOR         = 'iot/sensor/data';    // HW publishes: {"temp":30.8,"hum":78,"ldr":1}
-const TOPIC_DEVICE_CONTROL = 'iot/device/control'; // Backend publishes: "led:1,status:on"
+const TOPIC_DEVICE_CONTROL = 'iot/device/control'; // Backend publishes: {"led":1,"status":"on"}
 const TOPIC_DEVICE_STATUS  = 'iot/device/status';  // HW publishes: {"device":"led 1","action":"on","status":"success"}
-                                                    //           or: {"error":"invalid action"}
+const TOPIC_DEVICE_SYNC    = 'iot/device/sync';    // [NEW] Bidirectional sync channel
 
 // ============================================================
 // Device control mapping: DB nameDev → hardware led number
-// Frontend/Backend sends: "light" → hardware receives: "led:3,status:on"
 // ============================================================
 const DEVICE_LED_MAP = {
     fan:   1,  // LED_TEMP (GPIO14, D5)
@@ -23,7 +23,6 @@ const DEVICE_LED_MAP = {
 
 // ============================================================
 // Status response mapping: hardware "led N" → DB nameDev
-// HW sends: {"device":"led 1",...} → we look up "fan"
 // ============================================================
 const HW_LED_TO_DEVICE = {
     'led 1': 'fan',
@@ -33,12 +32,11 @@ const HW_LED_TO_DEVICE = {
 
 // ============================================================
 // Sensor key aliases: DB nameSensor → possible hardware payload keys
-// Hardware changed "light" key to "ldr" for light sensor
 // ============================================================
 const SENSOR_ALIASES = {
     temperature: ['temperature', 'temp'],
     humidity:    ['humidity', 'hum'],
-    light:       ['light', 'lux', 'ldr'],   // hardware now sends "ldr" key
+    light:       ['light', 'lux', 'ldr'],
     temp:        ['temp', 'temperature'],
     hum:         ['hum', 'humidity'],
     ldr:         ['ldr', 'light'],
@@ -46,6 +44,9 @@ const SENSOR_ALIASES = {
 
 let client = null;
 
+// ============================================================
+// MQTT Init
+// ============================================================
 function initMqtt() {
     const brokerUrl = process.env.MQTT_HOST || 'mqtt://localhost';
     client = mqtt.connect(brokerUrl, {
@@ -57,14 +58,25 @@ function initMqtt() {
 
     client.on('connect', () => {
         console.log('[MQTT] Connected to broker:', brokerUrl);
+
         client.subscribe(TOPIC_SENSOR, (err) => {
             if (!err) console.log(`[MQTT] Subscribed to ${TOPIC_SENSOR}`);
-            else console.error('[MQTT] Subscribe error (sensor):', err.message);
+            else      console.error('[MQTT] Subscribe error (sensor):', err.message);
         });
         client.subscribe(TOPIC_DEVICE_STATUS, (err) => {
             if (!err) console.log(`[MQTT] Subscribed to ${TOPIC_DEVICE_STATUS}`);
-            else console.error('[MQTT] Subscribe error (status):', err.message);
+            else      console.error('[MQTT] Subscribe error (status):', err.message);
         });
+        client.subscribe(TOPIC_DEVICE_SYNC, (err) => {
+            if (!err) console.log(`[MQTT] Subscribed to ${TOPIC_DEVICE_SYNC}`);
+            else      console.error('[MQTT] Subscribe error (sync):', err.message);
+        });
+
+        // [NEW] Sau 3 giây kết nối, tự push toàn bộ trạng thái xuống hardware
+        // (phòng trường hợp backend restart khi ESP đang online)
+        setTimeout(() => {
+            publishFullState('backend-init');
+        }, 3000);
     });
 
     client.on('message', async (topic, message) => {
@@ -84,6 +96,8 @@ function initMqtt() {
                 await onSensorData(payload);
             } else if (topic === TOPIC_DEVICE_STATUS) {
                 await onDeviceStatus(payload);
+            } else if (topic === TOPIC_DEVICE_SYNC) {
+                await onSyncRequest(payload);
             }
         } catch (err) {
             console.error('[MQTT] Handler error:', err.message);
@@ -94,14 +108,114 @@ function initMqtt() {
     client.on('close',     ()    => console.log('[MQTT] Connection closed'));
     client.on('reconnect', ()    => console.log('[MQTT] Reconnecting...'));
     client.on('offline',   ()    => console.log('[MQTT] Client offline'));
+
+    // [NEW] Pending timeout guard — chạy mỗi 15 giây
+    // Nếu lệnh vẫn còn "pending" sau 30 giây → mark failed và retry
+    setInterval(pendingTimeoutGuard, 15000);
+}
+
+// ============================================================
+// [NEW] Sync request handler
+// ESP gửi: {"request":"sync"} → Backend đọc DB → push trạng thái đầy đủ
+// Backend cũng lắng nghe xác nhận: {"sync":"applied"} — chỉ log, không xử lý thêm
+// ============================================================
+async function onSyncRequest(payload) {
+    // Bỏ qua payload xác nhận từ ESP
+    if (payload?.sync === 'applied') {
+        console.log('[SYNC] Hardware confirmed sync applied.');
+        return;
+    }
+
+    if (payload?.request !== 'sync') {
+        console.warn('[SYNC] Unknown sync payload:', payload);
+        return;
+    }
+
+    console.log('[SYNC] Hardware requested state sync. Reading DB...');
+    await publishFullState('hw-request');
+}
+
+// ============================================================
+// [NEW] Đọc trạng thái hiện tại từ DB và push xuống hardware
+// Payload gửi xuống: {"fan":1,"air":0,"light":1}  (1=ON, 0=OFF)
+// source: chuỗi mô tả ai gọi, chỉ dùng cho log
+// ============================================================
+async function publishFullState(source = 'manual') {
+    if (!client || !client.connected) {
+        console.warn('[SYNC] Cannot push state: MQTT client not connected');
+        return;
+    }
+
+    try {
+        const devices = await Device.findAll();
+        const state = {};
+
+        for (const device of devices) {
+            // Chỉ lấy action 'success' gần nhất — đồng nhất với getStatus trong deviceController
+            const lastAction = await DeviceAction.findOne({
+                where: {
+                    IDdev:  device.IDdev,
+                    Status: 'success',
+                },
+                order: [['date', 'DESC']],
+            });
+            // running: 1 = đang bật, 0 = đang tắt
+            state[device.nameDev] = lastAction?.running ?? 0;
+        }
+
+        const msg = JSON.stringify(state);
+        client.publish(TOPIC_DEVICE_SYNC, msg, (err) => {
+            if (err) console.error('[SYNC] Publish error:', err.message);
+            else     console.log(`[SYNC] (${source}) Full state pushed → hardware:`, state);
+        });
+    } catch (err) {
+        console.error('[SYNC] publishFullState error:', err.message);
+    }
+}
+
+// ============================================================
+// [NEW] Pending timeout guard
+// Kiểm tra các DeviceAction có Status='pending' quá 30 giây
+// → mark 'failed', retry bằng cách publish lại lệnh xuống hardware
+// ============================================================
+async function pendingTimeoutGuard() {
+    try {
+        const threshold = new Date(Date.now() - 15000); // 15 giây trước (update-note §2)
+        const stuckActions = await DeviceAction.findAll({
+            where: {
+                Status: 'pending',
+                date:   { [Op.lt]: threshold },
+            },
+        });
+
+        if (stuckActions.length === 0) return;
+
+        console.warn(`[GUARD] Found ${stuckActions.length} stuck pending action(s). Retrying...`);
+
+        for (const action of stuckActions) {
+            await action.update({ Status: 'failed' });
+
+            const device = await Device.findByPk(action.IDdev);
+            if (!device) continue;
+
+            console.warn(`[GUARD] Retrying: ${device.nameDev} → ${action.Action}`);
+            publishDeviceControl(device.nameDev, action.Action);
+
+            // Thông báo lên WebSocket để UI biết đang retry
+            pushDeviceStatus({
+                device: device.nameDev,
+                is_on:  action.Action?.toUpperCase() === 'ON',
+                retrying: true,
+            });
+        }
+    } catch (err) {
+        console.error('[GUARD] pendingTimeoutGuard error:', err.message);
+    }
 }
 
 // ============================================================
 // Sensor data handler
 // Hardware payload: {"temp":30.8,"hum":78,"ldr":1}
-//   - "temp" → DB sensor "temperature"
-//   - "hum"  → DB sensor "humidity"
-//   - "ldr"  → DB sensor "light" (key renamed from "light" to "ldr")
 // ============================================================
 async function onSensorData(payload) {
     const sensors = await Sensor.findAll();
@@ -140,16 +254,13 @@ async function onSensorData(payload) {
 function resolvePayloadKey(payload, dbSensorName) {
     if (!dbSensorName) return null;
 
-    // 1. Direct match
     if (payload[dbSensorName] !== undefined) return dbSensorName;
 
-    // 2. Alias lookup: dbName → list of possible hw keys
     const aliases = SENSOR_ALIASES[dbSensorName] || [];
     for (const alias of aliases) {
         if (payload[alias] !== undefined) return alias;
     }
 
-    // 3. Reverse: check if any hw key's alias list includes dbName
     for (const [hwKey, aliasList] of Object.entries(SENSOR_ALIASES)) {
         if (aliasList.includes(dbSensorName) && payload[hwKey] !== undefined) {
             return hwKey;
@@ -160,19 +271,14 @@ function resolvePayloadKey(payload, dbSensorName) {
 }
 
 // ============================================================
-// Device status handler — NEW format (espCODE.cpp refactored)
-//
-// Success response: {"device":"led 1","action":"on","status":"success"}
-//                   {"device":"all","action":"off","status":"success"}
-// Error response:   {"error":"invalid action"} or {"error":"unknown device"}
-//
-// Mapping: "led 1" → fan, "led 2" → air, "led 3" → light
+// Device status handler
+// Success: {"device":"led 1","action":"on","status":"success"}
+// Error:   {"error":"invalid action"}
+// Sync ack:{"sync":"applied"}  ← handled in onSyncRequest
 // ============================================================
 async function onDeviceStatus(payload) {
-    // Handle hardware error response
     if (payload.error) {
         console.error('[MQTT] Hardware reported error:', payload.error);
-        // Mark the most recent pending action as failed
         await markAllPendingFailed();
         return;
     }
@@ -180,7 +286,7 @@ async function onDeviceStatus(payload) {
     const { device: hwDevice, action, status } = payload;
 
     if (!hwDevice || !action) {
-        console.warn('[MQTT] Unexpected device status payload format:', payload);
+        console.warn('[MQTT] Unexpected device status payload:', payload);
         return;
     }
 
@@ -192,7 +298,6 @@ async function onDeviceStatus(payload) {
     const is_on = (action === 'on');
 
     if (hwDevice === 'all') {
-        // Broadcast: update all 3 devices
         const devices = await Device.findAll();
         for (const device of devices) {
             await applyDeviceStatus(device, is_on);
@@ -200,7 +305,6 @@ async function onDeviceStatus(payload) {
         }
         console.log(`[MQTT] All devices → ${action}`);
     } else {
-        // Single device: "led 1", "led 2", or "led 3"
         const dbName = HW_LED_TO_DEVICE[hwDevice];
         if (!dbName) {
             console.warn(`[MQTT] Unknown hardware device key: "${hwDevice}"`);
@@ -220,9 +324,7 @@ async function onDeviceStatus(payload) {
 }
 
 /**
- * Update the DeviceAction record in DB.
- * If there is a pending action awaiting confirmation, mark it success/failed.
- * Otherwise update the latest record (physical button press).
+ * Update the DeviceAction record in DB after hardware confirms.
  */
 async function applyDeviceStatus(device, is_on) {
     const pendingLog = await DeviceAction.findOne({
@@ -253,7 +355,6 @@ async function markAllPendingFailed() {
             });
             if (pendingLog) {
                 await pendingLog.update({ Status: 'failed', running: 0 });
-                const { pushDeviceStatus } = require('./websocketService');
                 pushDeviceStatus({ device: device.nameDev, is_on: false, error: 'hardware_error' });
             }
         }
@@ -264,7 +365,7 @@ async function markAllPendingFailed() {
 
 // ============================================================
 // Publish device control command to hardware
-// Format: "led:N,status:on" or "led:N,status:off"   (plain text)
+// Format JSON: {"led":1,"status":"on"}
 // Called by deviceController.control()
 // ============================================================
 function publishDeviceControl(deviceName, action) {
@@ -280,7 +381,7 @@ function publishDeviceControl(deviceName, action) {
     }
 
     const status  = action?.toUpperCase() === 'ON' ? 'on' : 'off';
-    const message = `led:${ledNum},status:${status}`;
+    const message = JSON.stringify({ led: ledNum, status });
 
     client.publish(TOPIC_DEVICE_CONTROL, message, (err) => {
         if (err) console.error('[MQTT] Publish error:', err.message);
@@ -288,4 +389,4 @@ function publishDeviceControl(deviceName, action) {
     });
 }
 
-module.exports = { initMqtt, publishDeviceControl };
+module.exports = { initMqtt, publishDeviceControl, publishFullState };
