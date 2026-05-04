@@ -47,6 +47,24 @@ export const getDeviceHistory = (params = {}) => {
   return api.get('/device-actions', { params: cleaned }).then(r => r.data);
 };
 
+/* ─── Statistics APIs ─── */
+
+/**
+ * Lấy thống kê số lần thao tác thành công theo bộ lọc thời gian
+ * @param {Object} params - { year, month, week, day }
+ */
+export const getStatistics = (params = {}) => {
+  const cleaned = {};
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') cleaned[k] = v;
+  }
+  return api.get('/statistics', { params: cleaned }).then(r => r.data);
+};
+
+/** Lấy danh sách các tháng có dữ liệu thao tác thành công */
+export const getAvailableMonths = () =>
+  api.get('/statistics/available-months').then(r => r.data);
+
 /* ─── Datetime helpers ─── */
 
 /**

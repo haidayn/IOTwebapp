@@ -16,9 +16,11 @@ const TOPIC_DEVICE_SYNC    = 'iot/device/sync';    // [NEW] Bidirectional sync c
 // Device control mapping: DB nameDev → hardware led number
 // ============================================================
 const DEVICE_LED_MAP = {
-    fan:   1,  // LED_TEMP (GPIO14, D5)
-    air:   2,  // LED_HUM  (GPIO12, D6)
-    light: 3,  // LED_LDR  (GPIO13, D7)
+    fan:    1,  // LED_TEMP (GPIO14, D5)
+    air:    2,  // LED_HUM  (GPIO12, D6)
+    light:  3,  // LED_LDR  (GPIO13, D7)
+    tv:     4,  // LED_TV   (GPIO0,  D3)
+    fridge: 5,  // LED_FRIDGE (GPIO2, D4)
 };
 
 // ============================================================
@@ -28,6 +30,8 @@ const HW_LED_TO_DEVICE = {
     'led 1': 'fan',
     'led 2': 'air',
     'led 3': 'light',
+    'led 4': 'tv',
+    'led 5': 'fridge',
 };
 
 // ============================================================

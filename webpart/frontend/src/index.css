@@ -603,4 +603,190 @@ table.data tbody tr:hover { background: #f8faff; }
   .profile-head { grid-template-columns: 1fr; text-align: center; justify-items: center; }
   .profile-links { grid-template-columns: 1fr; }
   .main { padding: 18px 16px 40px; }
+  .stats-cards-grid { grid-template-columns: 1fr; }
+}
+
+/* ---------- Statistics Page ---------- */
+.stats-filter-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+  padding: 18px 22px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+
+.filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.filter-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.stats-filter-bar .filter-select,
+.stats-filter-bar input[type="date"] {
+  padding: 8px 30px 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 10px center;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  transition: border-color var(--transition), box-shadow var(--transition);
+  min-width: 140px;
+}
+
+.stats-filter-bar input[type="date"] {
+  background-image: none;
+  padding-right: 12px;
+  min-width: 140px;
+  cursor: pointer;
+}
+
+.stats-filter-bar .filter-select:focus,
+.stats-filter-bar input[type="date"]:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(59,108,246,0.12);
+}
+
+.stats-filter-bar .btn-reset {
+  align-self: flex-end;
+  padding: 8px 16px;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color var(--transition), color var(--transition), background var(--transition);
+  white-space: nowrap;
+}
+.stats-filter-bar .btn-reset:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: var(--primary-light);
+}
+
+.stats-range-label {
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 20px;
+  font-weight: 500;
+  min-height: 20px;
+}
+
+/* Device stat cards grid */
+.stats-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 18px;
+}
+
+.stats-device-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  padding: 22px 24px;
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  transition: box-shadow var(--transition), transform var(--transition);
+}
+.stats-device-card:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+
+.stats-card-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: var(--primary-light);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.stats-card-icon svg {
+  width: 22px;
+  height: 22px;
+  color: var(--primary);
+}
+
+.stats-card-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.stats-card-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stats-card-numbers {
+  display: flex;
+  gap: 10px;
+}
+
+.stats-num {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+.stats-num-value {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.5px;
+}
+
+.stats-num-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+  margin-top: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.stats-total .stats-num-value { color: var(--text); }
+.stats-on .stats-num-value    { color: var(--primary); }
+.stats-off .stats-num-value   { color: var(--danger); }
+
+.stats-on  { background: var(--primary-light); }
+.stats-off { background: var(--danger-light); }
+
+.stats-empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--muted);
+  font-size: 15px;
 }

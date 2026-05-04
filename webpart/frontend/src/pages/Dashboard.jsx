@@ -41,17 +41,32 @@ const LedIcon = () => (
     <path d="M9 18h6M10 22h4"/>
   </svg>
 );
+const TvIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <rect x="2" y="3" width="20" height="15" rx="2"/>
+    <path d="M8 21h8M12 18v3"/>
+  </svg>
+);
+const FridgeIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <rect x="4" y="2" width="16" height="20" rx="2"/>
+    <path d="M4 10h16"/>
+    <path d="M9 6v2M9 14v4"/>
+  </svg>
+);
 
 const DEVICES = [
-  { key: 'fan',   name: 'Fan',             icon: <FanIcon /> },
-  { key: 'air',   name: 'Air Conditioner', icon: <AirIcon /> },
-  { key: 'light', name: 'Light',           icon: <LedIcon /> },
+  { key: 'fan',    name: 'Fan',             icon: <FanIcon /> },
+  { key: 'air',    name: 'Air Conditioner', icon: <AirIcon /> },
+  { key: 'light',  name: 'Light',           icon: <LedIcon /> },
+  { key: 'tv',     name: 'TV',              icon: <TvIcon /> },
+  { key: 'fridge', name: 'Fridge',          icon: <FridgeIcon /> },
 ];
 
 export default function Dashboard() {
   const [sensors, setSensors]      = useState({ temperature: null, humidity: null, light: null });
   const [sensorHistory, setHistory] = useState({});   // { temperature: [], humidity: [], light: [] }
-  const [devStatus, setDevStatus]   = useState({ fan: null, air: null, light: null });
+  const [devStatus, setDevStatus]   = useState({ fan: null, air: null, light: null, tv: null, fridge: null });
   const [pending, setPending]       = useState({});
   const [initError, setInitError]   = useState(null);  // Initial page-load error only
 

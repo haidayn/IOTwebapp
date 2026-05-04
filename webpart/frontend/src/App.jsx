@@ -4,6 +4,7 @@ import Dashboard from './pages/Dashboard';
 import SensorHistory from './pages/SensorHistory';
 import DeviceHistory from './pages/DeviceHistory';
 import Profile from './pages/Profile';
+import Statistics from './pages/Statistics';
 
 export default function App() {
   return (
@@ -13,7 +14,8 @@ export default function App() {
           <Route index element={<Dashboard />} />
           <Route path="sensor-history" element={<SensorHistory />} />
           <Route path="device-history" element={<DeviceHistory />} />
-          <Route path="profile" element={<Profile />} />
+          <Route path="statistics"     element={<Statistics />} />
+          <Route path="profile"        element={<Profile />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

@@ -3,9 +3,10 @@ const express = require('express');
 const http = require('http');
 const cors = require('cors');
 const { sequelize } = require('./models');
-const sensorRoutes = require('./routes/sensorRoutes');
-const deviceRoutes = require('./routes/deviceRoutes');
-const errorHandler = require('./middlewares/errorHandler');
+const sensorRoutes     = require('./routes/sensorRoutes');
+const deviceRoutes     = require('./routes/deviceRoutes');
+const statisticsRoutes = require('./routes/statisticsRoutes');
+const errorHandler     = require('./middlewares/errorHandler');
 const { initWebSocket } = require('./services/websocketService');
 const { initMqtt } = require('./services/mqttService');
 
@@ -20,9 +21,10 @@ app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date() });
 });
 
-// Spec: /api/sensors/... and /api/device/... and /api/device-actions
-app.use('/api/sensors', sensorRoutes);
-app.use('/api/device', deviceRoutes);
+// Spec: /api/sensors/... and /api/device/... and /api/device-actions and /api/statistics
+app.use('/api/sensors',    sensorRoutes);
+app.use('/api/device',     deviceRoutes);
+app.use('/api/statistics', statisticsRoutes);
 // Import controller directly for device-actions since it's at the root API level
 const deviceController = require('./controllers/deviceController');
 app.get('/api/device-actions', deviceController.getHistory);

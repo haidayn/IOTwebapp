@@ -33,6 +33,15 @@ const navItems = [
     ),
   },
   {
+    to: '/statistics',
+    label: 'Statistics',
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M18 20V10M12 20V4M6 20v-6"/>
+      </svg>
+    ),
+  },
+  {
     to: '/profile',
     label: 'Profile',
     icon: (

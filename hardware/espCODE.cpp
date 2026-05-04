@@ -25,9 +25,11 @@ String mqtt_pass   = "";
 #define DHT_PIN  4   // GPIO4  D2
 #define LDR_PIN  5   // GPIO5  D1
 
-#define LED_TEMP 14  // ID: 1 - Quạt (Fan) - D5
-#define LED_HUM  12  // ID: 2 - Điều hòa (Air) - D6
-#define LED_LDR  13  // ID: 3 - Đèn (Light) - D7
+#define LED_TEMP   14  // ID: 1 - Quạt (Fan) - D5
+#define LED_HUM    12  // ID: 2 - Điều hòa (Air) - D6
+#define LED_LDR    13  // ID: 3 - Đèn (Light) - D7
+#define LED_TV     15  // ID: 4 - TV - D8 (GPIO15)
+#define LED_FRIDGE  2  // ID: 5 - Tủ lạnh (Fridge) - D4 (GPIO2)
 
 #define DHTTYPE DHT11
 
@@ -99,7 +101,7 @@ void sendError(String message) {
 }
 
 /* ================= ÁP DỤNG TRẠNG THÁI ĐỒNG BỘ TỪ DB ================= */
-// Payload nhận từ backend: {"fan":1,"air":0,"light":1}  (1=ON, 0=OFF)
+// Payload nhận từ backend: {"fan":1,"air":0,"light":1,"tv":0,"fridge":1}  (1=ON, 0=OFF)
 void applySyncState(StaticJsonDocument<256>& doc) {
   Serial.println("[SYNC] Ap dung trang thai tu DB...");
 
@@ -108,19 +110,31 @@ void applySyncState(StaticJsonDocument<256>& doc) {
   if (doc.containsKey("fan")) {
     int s = doc["fan"].as<int>();
     digitalWrite(LED_TEMP, s ? HIGH : LOW);
-    Serial.println("[SYNC]   fan   -> " + String(s ? "ON" : "OFF"));
+    Serial.println("[SYNC]   fan    -> " + String(s ? "ON" : "OFF"));
     anyApplied = true;
   }
   if (doc.containsKey("air")) {
     int s = doc["air"].as<int>();
     digitalWrite(LED_HUM, s ? HIGH : LOW);
-    Serial.println("[SYNC]   air   -> " + String(s ? "ON" : "OFF"));
+    Serial.println("[SYNC]   air    -> " + String(s ? "ON" : "OFF"));
     anyApplied = true;
   }
   if (doc.containsKey("light")) {
     int s = doc["light"].as<int>();
     digitalWrite(LED_LDR, s ? HIGH : LOW);
-    Serial.println("[SYNC]   light -> " + String(s ? "ON" : "OFF"));
+    Serial.println("[SYNC]   light  -> " + String(s ? "ON" : "OFF"));
+    anyApplied = true;
+  }
+  if (doc.containsKey("tv")) {
+    int s = doc["tv"].as<int>();
+    digitalWrite(LED_TV, s ? HIGH : LOW);
+    Serial.println("[SYNC]   tv     -> " + String(s ? "ON" : "OFF"));
+    anyApplied = true;
+  }
+  if (doc.containsKey("fridge")) {
+    int s = doc["fridge"].as<int>();
+    digitalWrite(LED_FRIDGE, s ? HIGH : LOW);
+    Serial.println("[SYNC]   fridge -> " + String(s ? "ON" : "OFF"));
     anyApplied = true;
   }
 
@@ -300,7 +314,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
       sendError("invalid action");
       return;
     }
-    if (ledId < 0 || ledId > 3) {
+    if (ledId < 0 || ledId > 5) {
       sendError("unknown device");
       return;
     }
@@ -311,14 +325,18 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 
     if (ledId == 0) {
       deviceName = "all";
-      digitalWrite(LED_TEMP, pinState);
-      digitalWrite(LED_HUM,  pinState);
-      digitalWrite(LED_LDR,  pinState);
+      digitalWrite(LED_TEMP,   pinState);
+      digitalWrite(LED_HUM,    pinState);
+      digitalWrite(LED_LDR,    pinState);
+      digitalWrite(LED_TV,     pinState);
+      digitalWrite(LED_FRIDGE, pinState);
     } else {
       deviceName = "led " + String(ledId);
-      if      (ledId == 1) digitalWrite(LED_TEMP, pinState);
-      else if (ledId == 2) digitalWrite(LED_HUM,  pinState);
-      else if (ledId == 3) digitalWrite(LED_LDR,  pinState);
+      if      (ledId == 1) digitalWrite(LED_TEMP,   pinState);
+      else if (ledId == 2) digitalWrite(LED_HUM,    pinState);
+      else if (ledId == 3) digitalWrite(LED_LDR,    pinState);
+      else if (ledId == 4) digitalWrite(LED_TV,     pinState);
+      else if (ledId == 5) digitalWrite(LED_FRIDGE, pinState);
     }
 
     sendResponse(deviceName, action);
@@ -329,27 +347,35 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 void setup() {
   Serial.begin(115200);
 
-  pinMode(LED_TEMP, OUTPUT);
-  pinMode(LED_HUM,  OUTPUT);
-  pinMode(LED_LDR,  OUTPUT);
-  pinMode(LDR_PIN,  INPUT);
+  pinMode(LED_TEMP,   OUTPUT);
+  pinMode(LED_HUM,    OUTPUT);
+  pinMode(LED_LDR,    OUTPUT);
+  pinMode(LED_TV,     OUTPUT);
+  pinMode(LED_FRIDGE, OUTPUT);
+  pinMode(LDR_PIN,    INPUT);
 
   // Tắt tất cả khi khởi động — chờ lệnh sync từ DB
-  digitalWrite(LED_TEMP, LOW);
-  digitalWrite(LED_HUM,  LOW);
-  digitalWrite(LED_LDR,  LOW);
+  digitalWrite(LED_TEMP,   LOW);
+  digitalWrite(LED_HUM,    LOW);
+  digitalWrite(LED_LDR,    LOW);
+  digitalWrite(LED_TV,     LOW);
+  digitalWrite(LED_FRIDGE, LOW);
 
   Serial.println("\n[SYS] Dang khoi dong...");
 
   // Blink 3 lần báo hiệu
   for (int i = 0; i < 3; i++) {
-    digitalWrite(LED_TEMP, HIGH);
-    digitalWrite(LED_HUM,  HIGH);
-    digitalWrite(LED_LDR,  HIGH);
+    digitalWrite(LED_TEMP,   HIGH);
+    digitalWrite(LED_HUM,    HIGH);
+    digitalWrite(LED_LDR,    HIGH);
+    digitalWrite(LED_TV,     HIGH);
+    digitalWrite(LED_FRIDGE, HIGH);
     delay(300);
-    digitalWrite(LED_TEMP, LOW);
-    digitalWrite(LED_HUM,  LOW);
-    digitalWrite(LED_LDR,  LOW);
+    digitalWrite(LED_TEMP,   LOW);
+    digitalWrite(LED_HUM,    LOW);
+    digitalWrite(LED_LDR,    LOW);
+    digitalWrite(LED_TV,     LOW);
+    digitalWrite(LED_FRIDGE, LOW);
     delay(300);
   }
 
