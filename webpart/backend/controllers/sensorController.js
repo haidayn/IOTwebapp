@@ -40,13 +40,43 @@ const getLatest = async (req, res, next) => {
  * @param {object} parsed   - Chứa các giá trị phân tích: { year?, month?, day?, hour?, minute?, second? }
  * @param {string} qualifiedCol - Tên cột CSDL đầy đủ để filter (vd: 'SensorData.createAt')
  */
+/**
+ * Tạo Date object cho query Sequelize khi Sequelize config có timezone: '+07:00'.
+ *
+ * VÌ SAO CẦN HÀM NÀY:
+ *   Sequelize với timezone:'+07:00' tự động cộng thêm +7h vào mọi Date object
+ *   trước khi gửi sang MySQL. DB lưu giờ LOCAL (ví dụ 16:14:53 ICT).
+ *   Nếu dùng `new Date(y, mo-1, d, h, mi, se)` → đây là local Date, Sequelize
+ *   cộng thêm 7h → gửi 23:14:53 sang DB → KHÔNG KHỚP với 16:14:53 đã lưu.
+ *
+ * CÁCH FIX:
+ *   Dùng `Date.UTC(y, mo-1, d, h, mi, se)` để tạo epoch mà UTC representation
+ *   chính là giờ local người dùng nhập (VD: 16:14:53 UTC).
+ *   Sequelize cộng thêm +7h → gửi 23:14:53? Không!
+ *   THỰC RA Sequelize serialize theo offset: nó lưu date.toISOString() rồi apply
+ *   timezone offset khi gửi. Với timezone:'+07:00', Sequelize gửi UTC+7 string.
+ *   Date.UTC(2026,4,4,16,14,53) = 2026-05-04T16:14:53Z, Sequelize gửi
+ *   "2026-05-04 23:14:53" → sai.
+ *
+ *   FIX THỰC SỰ: Dùng new Date(Date.UTC(y, mo-1, d, h, mi, se, ms) - 7*3600*1000)
+ *   = fake UTC-7h, để Sequelize cộng +7h thành đúng giờ người dùng nhập.
+ *   Tức là: truyền vào Date đại diện cho (giờ local - 7h) = UTC thực.
+ *   Sequelize với tz+7 sẽ cộng thêm +7h → ra đúng giờ local lưu trong DB.
+ */
+const TZ_OFFSET_MS = 7 * 60 * 60 * 1000; // 7 giờ tính bằng ms
+
+function makeLocalDate(y, mo, d, h, mi, se, ms = 0) {
+    // Tạo UTC epoch tương ứng với giờ local (mo là 1-indexed)
+    // Sau đó trừ 7h để bù cho việc Sequelize sẽ cộng +7h
+    return new Date(Date.UTC(y, mo - 1, d, h, mi, se, ms) - TZ_OFFSET_MS);
+}
+
 function buildExactDateConditions(parsed, qualifiedCol) {
-    if (!parsed || Object.keys(parsed).length === 0) return []; // Nếu người dùng không filter, trả về rỗng
+    if (!parsed || Object.keys(parsed).length === 0) return [];
 
     const { year, month, day, hour, minute, second } = parsed;
 
-    // PHẦN 1: Nếu người dùng có truyền năm (year)
-    // Lúc này ta có thể quy vùng điều kiện thành 1 dải thời gian từ `start` đến `end`
+    // PHẦN 1: Có năm → tạo khoảng [start, end] khớp với giờ local trong DB
     if (year) {
         const y  = year;
         const mo = month  ?? null;
@@ -58,41 +88,38 @@ function buildExactDateConditions(parsed, qualifiedCol) {
         let start, end;
 
         if (mo !== null && d !== null && h !== null && mi !== null && se !== null) {
-            // Trường hợp 1: Có tới tận giây. Ví dụ: 2026/05/03 14:30:45
-            start = new Date(y, mo-1, d, h, mi, se);
-            end   = new Date(y, mo-1, d, h, mi, se, 999);
+            // Chính xác tới giây
+            start = makeLocalDate(y, mo, d, h, mi, se, 0);
+            end   = makeLocalDate(y, mo, d, h, mi, se, 999);
         } else if (mo !== null && d !== null && h !== null && mi !== null) {
-            // Trường hợp 2: Có tới phút. Lấy toàn bộ 60 giây trong phút đó.
-            start = new Date(y, mo-1, d, h, mi, 0);
-            end   = new Date(y, mo-1, d, h, mi, 59, 999);
+            // Chính xác tới phút
+            start = makeLocalDate(y, mo, d, h, mi, 0, 0);
+            end   = makeLocalDate(y, mo, d, h, mi, 59, 999);
         } else if (mo !== null && d !== null && h !== null) {
-            // Trường hợp 3: Có tới giờ. Lấy toàn bộ 60 phút trong giờ đó.
-            start = new Date(y, mo-1, d, h, 0, 0);
-            end   = new Date(y, mo-1, d, h, 59, 59, 999);
+            // Chính xác tới giờ
+            start = makeLocalDate(y, mo, d, h, 0, 0, 0);
+            end   = makeLocalDate(y, mo, d, h, 59, 59, 999);
         } else if (mo !== null && d !== null) {
-            // Trường hợp 4: Có tới ngày. Lấy toàn bộ 24h trong ngày đó.
-            start = new Date(y, mo-1, d, 0, 0, 0);
-            end   = new Date(y, mo-1, d, 23, 59, 59, 999);
+            // Cả ngày
+            start = makeLocalDate(y, mo, d, 0, 0, 0, 0);
+            end   = makeLocalDate(y, mo, d, 23, 59, 59, 999);
         } else if (mo !== null) {
-            // Trường hợp 5: Chỉ có tháng và năm. Lấy từ ngày 1 tới ngày cuối tháng.
-            start = new Date(y, mo-1, 1, 0, 0, 0);
-            end   = new Date(y, mo, 0, 23, 59, 59, 999);
+            // Cả tháng
+            const lastDay = new Date(y, mo, 0).getDate();
+            start = makeLocalDate(y, mo, 1,       0,  0,  0, 0);
+            end   = makeLocalDate(y, mo, lastDay, 23, 59, 59, 999);
         } else {
-            // Trường hợp 6: Chỉ có năm. Lấy toàn bộ 365 ngày của năm đó.
-            start = new Date(y, 0, 1, 0, 0, 0);
-            end   = new Date(y, 11, 31, 23, 59, 59, 999);
+            // Cả năm
+            start = makeLocalDate(y, 1,  1,  0,  0,  0, 0);
+            end   = makeLocalDate(y, 12, 31, 23, 59, 59, 999);
         }
 
-        // Tách lấy chữ "createAt" để tạo key object
-        // Trả về lệnh lọc `between` dải (start, end)
         return [{ [qualifiedCol.split('.').pop()]: { [Op.between]: [start, end] } }];
     }
 
-    // PHẦN 2: Không có năm.
-    // VD: Người dùng gõ "14:30" (nghĩa là mọi ngày, miễn là lúc 14:30).
-    // Phải dùng các hàm built-in của MySQL để đối chiếu.
+    // PHẦN 2: Không có năm → dùng hàm MySQL để so sánh từng thành phần
+    // DB lưu giờ local (UTC+7) nên HOUR(col) trả về đúng giờ local, không cần CONVERT_TZ
     const conditions = [];
-    // fn('MONTH', col) dịch ra SQL là: MONTH(SensorData.createAt) = month
     if (month  !== undefined) conditions.push(seqWhere(fn('MONTH',  col(qualifiedCol)), month));
     if (day    !== undefined) conditions.push(seqWhere(fn('DAY',    col(qualifiedCol)), day));
     if (hour   !== undefined) conditions.push(seqWhere(fn('HOUR',   col(qualifiedCol)), hour));

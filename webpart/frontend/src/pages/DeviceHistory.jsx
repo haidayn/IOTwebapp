@@ -51,10 +51,9 @@ function parseFlexibleDate(raw) {
 
   for (const token of raw.trim().split(/\s+/)) {
     if (token.includes('/')) {
-      // --- Phần ngày: dấu "/" ---
+      // --- Dấu "/" → dd/mm/yyyy | mm/yyyy | dd/mm ---
       const dp = token.split('/');
       if (dp.length === 3) {
-        // dd/mm/yyyy
         const d = parseInt(dp[0]), m = parseInt(dp[1]), y = parseInt(dp[2]);
         if (!isNaN(d)) result.day   = d;
         if (!isNaN(m)) result.month = m;
@@ -62,19 +61,27 @@ function parseFlexibleDate(raw) {
       } else if (dp.length === 2) {
         const a = parseInt(dp[0]), b = parseInt(dp[1]);
         if (!isNaN(a) && !isNaN(b)) {
-          if (b >= 1000) {
-            // mm/yyyy
-            result.month = a;
-            result.year  = b;
-          } else {
-            // dd/mm
-            result.day   = a;
-            result.month = b;
-          }
+          if (b >= 1000) { result.month = a; result.year  = b; }
+          else           { result.day   = a; result.month = b; }
+        }
+      }
+    } else if (token.includes('-') && !token.startsWith('-')) {
+      // --- Dấu "-" → yyyy-mm-dd (ISO format hiển thị trong bảng) ---
+      const dp = token.split('-');
+      if (dp.length === 3) {
+        const y = parseInt(dp[0]), m = parseInt(dp[1]), d = parseInt(dp[2]);
+        if (!isNaN(y) && y > 1000) result.year  = y;
+        if (!isNaN(m))             result.month = m;
+        if (!isNaN(d))             result.day   = d;
+      } else if (dp.length === 2) {
+        const a = parseInt(dp[0]), b = parseInt(dp[1]);
+        if (!isNaN(a) && !isNaN(b)) {
+          if (a > 1000) { result.year = a; result.month = b; }
+          else          { result.month = a; result.day  = b; }
         }
       }
     } else if (token.includes(':')) {
-      // --- Phần thời gian: dấu ":" ---
+      // --- Dấu ":" → hh:mm:ss | hh:mm ---
       const tp = token.split(':');
       const h  = parseInt(tp[0]);
       if (!isNaN(h)) result.hour = h;
@@ -84,8 +91,8 @@ function parseFlexibleDate(raw) {
       // --- Số đơn lẻ ---
       const a = parseInt(token);
       if (!isNaN(a)) {
-        if (token.length === 4) result.year = a;  // yyyy
-        else if (a <= 23)       result.hour = a;  // hh
+        if (token.length === 4) result.year = a;
+        else if (a <= 23)       result.hour = a;
       }
     }
   }
