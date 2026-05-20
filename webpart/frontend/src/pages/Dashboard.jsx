@@ -70,7 +70,7 @@ export default function Dashboard() {
   const [pending, setPending]       = useState({});
   const [initError, setInitError]   = useState(null);  // Initial page-load error only
 
-  /* ─── Toast system (req2 §4.2) ─── */
+  /* ─── Toast system─── */
   const [toasts, setToasts] = useState([]);
   const showToast = useCallback((msg, type = 'error') => {
     const id = Date.now() + Math.random();
@@ -80,7 +80,7 @@ export default function Dashboard() {
   const dismissToast = useCallback((id) => setToasts(prev => prev.filter(t => t.id !== id)), []);
 
   /* ─── PHASE 1: Load initial sensor history → populate chart + stat cards ─── */
-  /* Requirements §2.2: Frontend → GET /api/sensors/history on Dashboard mount  */
+  /* Requirements Frontend → GET /api/sensors/history on Dashboard mount  */
   useEffect(() => {
     const loadAll = async () => {
       try {
@@ -126,13 +126,13 @@ export default function Dashboard() {
     setSensors(prev => ({ ...prev, ...normalized }));
   }, []);
 
-  /* Req2 §BƯỚC 14 + §4.2 Rollback handler */
+  /* Rollback handler */
   const handleDevicePush = useCallback(async (payload) => {
     const { device, is_on, error: devErr } = payload;
     if (!device) return;
 
     if (devErr) {
-      /* ─── ROLLBACK (req2 §4.2): Re-fetch DB state, replace Waiting with actual DB status ─── */
+      /* ─── ROLLBACK Re-fetch DB state, replace Waiting with actual DB status ─── */
       try {
         const freshStatus = await getDeviceStatus();
         setDevStatus(freshStatus);
@@ -151,13 +151,13 @@ export default function Dashboard() {
 
   useWebSocket(handleSensorPush, handleDevicePush);
 
-  /* Toggle device — req2 §BƯỚC 1-3 */
+  /* Toggle device*/
   const handleToggle = async (deviceKey, action) => {
     setPending(prev => ({ ...prev, [deviceKey]: true }));  // Bước 2: Waiting
     try {
       await controlDevice(deviceKey, action);              // Bước 3: POST /api/device/control
     } catch (err) {
-      /* HTTP error → rollback: re-fetch DB để lấy trạng thái thực (update-note §2) */
+      /* HTTP error → rollback: re-fetch DB để lấy trạng thái thực  */
       try {
         const freshStatus = await getDeviceStatus();
         setDevStatus(freshStatus);
@@ -211,7 +211,7 @@ export default function Dashboard() {
         <SensorChart initialHistory={sensorHistory} latestData={sensors} />
       </section>
 
-      {/* ─── Toast container — req2 §4.2 rollback notifications ─── */}
+      {/* ─── Toast container — rollback notifications ─── */}
       <div className="toast-container">
         {toasts.map(t => (
           <div key={t.id} className={`toast toast-${t.type}`}>
